@@ -11,7 +11,7 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 
 | 文件 | 作用 |
 |---|---|
-| `shared/bot_utils.py` | 两个 bot 共用的 5 个工具函数：`sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today` |
+| `shared/bot_utils.py` | 两个 bot 共用的 6 个工具函数：`sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today` / `fetch_article_text`（best-effort 抓正文全文，零依赖） |
 | `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑 |
 
 ## 两个 bot 如何引用本目录
