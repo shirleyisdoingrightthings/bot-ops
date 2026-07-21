@@ -1,4 +1,4 @@
-# bot_ops — 每日播报 Bot 的共享运行层
+# bot-ops — 每日播报 Bot 的共享运行层
 
 Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 bot 仓库
 （`crypto-daily-bot`、`AI-Daily-News-Bot`）各自独立，但通过本目录共享"形式和运行方式"：
@@ -7,17 +7,33 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 > ⚠️ 备份教训：本目录原本不在任何 GitHub 仓库里，换电脑时 `bot_utils.py` 丢失、
 > 整套工作流跑不起来。现已单独纳入版本控制，**改动后请记得 commit + push**。
 
+> 📍 位置变更（2026-07-21）：本目录已从 `~/Desktop/bot_ops/` 迁到 `~/bots/shared/`，
+> 与两个 bot 同级，Python 与 Shell 的引用路径统一。原 Desktop 目录已废弃。
+
 ## 内容
 
 | 文件 | 作用 |
 |---|---|
-| `shared/bot_utils.py` | 两个 bot 共用的 6 个工具函数：`sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today` / `fetch_article_text`（best-effort 抓正文全文，零依赖） |
-| `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑 |
+| `bot_utils.py` | 两个 bot 共用的 6 个工具函数：`sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today` / `fetch_article_text`（best-effort 抓正文全文，零依赖） |
+| `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑；仍失败则移交无头补跑 |
+| `headless_catchup_base.sh` | 共享无头补跑逻辑：用本机 `claude` CLI 无人值守完整重走 fetch → 写稿 → send，等价于手动 Run Now |
 
 ## 两个 bot 如何引用本目录
 
-- Python：脚本顶部 `sys.path.insert(0, ~/Desktop/bot_ops/shared)` 后 `from bot_utils import ...`
-- Shell：各 bot 的 `auto_repair.sh` 薄包装设好 `BOT_NAME/SCRIPT/ERROR/DIR` 后 `source ~/Desktop/bot_ops/auto_repair_base.sh`
+- Python：脚本顶部 `sys.path.insert(0, ~/bots/shared)` 后 `from bot_utils import ...`
+- Shell：各 bot 的 `auto_repair.sh` / `claude_catchup.sh` 薄包装设好变量后
+  `source ~/bots/shared/auto_repair_base.sh`（或 `headless_catchup_base.sh`）
+
+## 每日时间线
+
+| 时间 | 环节 | 执行者 |
+|---|---|---|
+| 08:30 | 主力：抓取 → Claude 写稿 → 推送 Telegram | Claude App 定时任务 `morning-catchup-daily-bots` |
+| 09:45 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
+| 随时 | 人工补发 | Claude App 手动任务 `manual-resend-daily-bots` |
+
+各 bot 的主 plist（`com.shirley.*-bot`）**不再承担调度职责**，仅作为密钥与代理的
+环境变量配置源供脚本读取。
 
 ## 关于密钥
 
