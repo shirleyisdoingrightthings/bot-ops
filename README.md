@@ -14,7 +14,7 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 
 | 文件 | 作用 |
 |---|---|
-| `bot_utils.py` | 两个 bot 共用的 6 个工具函数：`sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today` / `fetch_article_text`（best-effort 抓正文全文，零依赖） |
+| `bot_utils.py` | 两个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（泛科技源的 AI 相关性闸门）<br>**推送与监控** `paginate_telegram`（4096 切分 + 页码）/ `update_zero_streak`（RSS 源连续零产追踪） |
 | `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑；仍失败则移交无头补跑 |
 | `headless_catchup_base.sh` | 共享无头补跑逻辑：用本机 `claude` CLI 无人值守完整重走 fetch → 写稿 → send，等价于手动 Run Now |
 
@@ -34,6 +34,23 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 
 各 bot 的主 plist（`com.shirley.*-bot`）**不再承担调度职责**，仅作为密钥与代理的
 环境变量配置源供脚本读取。
+
+> ⚠️ launchd 陷阱（2026-07-23 修复）：`health_check.sh` 原来用 `bash xxx.sh &`
+> 起后台子进程再自己 exit，而 **launchd 在 job 主进程退出时会回收整个进程组**，
+> 子进程当场被杀。结果是自愈与补跑"日志上写了触发、实际从未执行"。现已全部改为
+> 前台调用。在本项目里加 launchd 触发的后台任务时务必注意这一点。
+
+## 跨天去重与源淘汰
+
+两个 bot 的时间窗（AI 24h / Crypto 3 天）都拦不住"同一条新闻连续多天入选"，
+因为脚本内的 `seen_urls` 只在单次运行内有效。现由共享层统一处理：
+
+- **去重**：`send` 成功后从稿件里抽 `<a href>` 记入各 bot 的 `logs/sent_urls.json`
+  （保留 7 天），下次 `fetch` 据此排除。归档点在发送成功之后，发失败的那批不会被
+  误标成"已播"。
+- **源淘汰**：`fetch` 统计每个源"过滤后还剩几条"，连续 3 天零产即在 stdout 输出
+  `=== SOURCE_ALERT ===` 块并写入 metrics，提示该源可以移除或更换。
+  连续天数由 `fetch` 单点写入 `logs/.zero_streak.json`，health_check 只读不写。
 
 ## 关于密钥
 
