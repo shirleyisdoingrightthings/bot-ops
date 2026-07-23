@@ -14,6 +14,11 @@ sys.path.insert(~/Desktop/bot_ops/shared) 共用本文件。
   - parse_entry_date(entry)        解析 RSS 条目时间，返回 UTC tz-aware datetime 或 None
   - already_ran_today(log_file)    今天是否已成功跑过（日志含当天 [OK] 记录）
   - fetch_article_text(url)        best-effort 抓文章正文全文（零依赖），失败/过短返回 ""
+  - url_key(url)                   URL 归一化（去 query/fragment/尾斜杠、转小写），用作去重键
+  - load_sent_urls(path)           读出最近 N 天已推送过的 URL 键集合（跨天去重用）
+  - record_sent_urls(path, urls)   记录本次实际推送的 URL 并按保留期裁剪
+  - extract_hrefs(html_text)       从稿件里抽出 <a href="..."> 的 URL（记录"真正播出去的"）
+  - is_ai_relevant(title, summary) 泛科技源的 AI 相关性闸门（垂直源不需要）
 """
 
 from __future__ import annotations
@@ -243,3 +248,195 @@ def fetch_article_text(url: str, timeout: int = 10,
     if len(text) < min_chars:
         return ""
     return text[:max_chars]
+
+
+# ───────────────────────────────────────────────
+# 7) 跨天去重 — 记住"真正推送过"的 URL
+# ───────────────────────────────────────────────
+# 背景：两个 bot 的时间窗口（AI 24h / Crypto 3 天）都可能让同一条新闻在连续
+# 多天进入 context——各脚本内的 seen_urls 只在单次运行内有效，拦不住跨天重复。
+# 策略：send 成功后，从稿件里抽出实际用到的 <a href> 记进 logs/sent_urls.json；
+# 下次 fetch 时据此排除。记录点选在 send 成功之后而不是 fetch 时，这样发送失败
+# 的那一批不会被误标成"已播"。
+
+SENT_URLS_KEEP_DAYS = 7
+
+_HREF_RE = re.compile(r'href\s*=\s*["\']([^"\']+)["\']', re.IGNORECASE)
+
+
+def url_key(url: str) -> str:
+    """归一化 URL 作为去重键：小写、去 query/fragment、去尾斜杠。
+
+    RSS 里同一篇文章的链接常带 utm_* 参数，且不同源指向同一文章时参数各异，
+    所以只用 scheme+host+path 作为身份。"""
+    if not url:
+        return ""
+    u = url.strip().split("#", 1)[0].split("?", 1)[0]
+    return u.rstrip("/").lower()
+
+
+def load_sent_urls(path, keep_days: int = SENT_URLS_KEEP_DAYS) -> set[str]:
+    """读出保留期内已推送的 URL 键集合；文件不存在/损坏一律返回空集（不阻断出稿）。"""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    cutoff = _days_ago_str(keep_days)
+    return {k for k, d in data.items() if isinstance(d, str) and d >= cutoff}
+
+
+def record_sent_urls(path, urls, keep_days: int = SENT_URLS_KEEP_DAYS) -> int:
+    """把本次实际推送的 URL 记入档案并裁掉过期条目，返回归档总量。
+
+    写档失败只告警不抛错——去重是增强项，不能让它把已经发成功的流程带崩。"""
+    p = Path(path)
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except Exception:
+        data = {}
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    for u in urls:
+        k = url_key(u)
+        if k:
+            data[k] = today
+
+    cutoff = _days_ago_str(keep_days)
+    data = {k: d for k, d in data.items() if isinstance(d, str) and d >= cutoff}
+
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(data, ensure_ascii=False, indent=0), encoding="utf-8")
+    except Exception as e:
+        print(f"[WARN] sent_urls 写入失败: {e}")
+    return len(data)
+
+
+def _days_ago_str(days: int) -> str:
+    from datetime import timedelta
+    return (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+
+def extract_hrefs(html_text: str) -> list[str]:
+    """从稿件中抽出所有 <a href="..."> 的 URL（只要 http/https）。"""
+    if not html_text:
+        return []
+    return [u for u in _HREF_RE.findall(html_text) if u.lower().startswith("http")]
+
+
+# ───────────────────────────────────────────────
+# 8) AI 相关性闸门 — 只给泛科技源用
+# ───────────────────────────────────────────────
+# 背景：engadget.com/rss.xml 这类全站源里大量条目与 AI 无关（游戏机 demo、
+# Steam 功能更新、影视并购），白白占掉抓取额度并污染写稿素材。垂直 AI 源
+# （theverge AI 频道、the-decoder 等）不过这道闸，避免误伤不含关键词的正当选题。
+
+_AI_KEYWORDS = (
+    "ai", "a.i.", "artificial intelligence", "machine learning", "deep learning",
+    "neural", "llm", "large language model", "chatbot", "generative",
+    "openai", "chatgpt", "gpt", "anthropic", "claude", "gemini", "deepmind",
+    "llama", "mistral", "moonshot", "deepseek", "qwen", "copilot", "midjourney",
+    "stable diffusion", "hugging face", "nvidia", "gpu", "tpu", "data center",
+    "datacenter", "robot", "humanoid", "autonomous", "self-driving",
+    "transformer model", "inference", "training run", "agentic",
+)
+
+# 单独成词才算命中的短词，避免 "ai" 匹配到 "said/certain"、"gpu" 之外的噪音
+_AI_WORD_RE = re.compile(
+    r"\b(?:ai|a\.i\.|llm|gpt|gpu|tpu|robot|robots|robotics|humanoid|neural|agentic)\b",
+    re.IGNORECASE,
+)
+
+
+def is_ai_relevant(title: str, summary: str = "") -> bool:
+    """判断一条泛科技源新闻是否与 AI 相关。标题或摘要命中即通过。"""
+    blob = f"{title or ''} {summary or ''}".lower()
+    if not blob.strip():
+        return False
+    if _AI_WORD_RE.search(blob):
+        return True
+    return any(kw in blob for kw in _AI_KEYWORDS if " " in kw or len(kw) > 4)
+
+
+# ───────────────────────────────────────────────
+# 9) paginate_telegram — 按段落切分 + 页码
+# ───────────────────────────────────────────────
+# Telegram 单条上限 4096。原先两个 bot 各自实现同一套切分逻辑且不带页码，
+# 读者收到第 2 条时开头直接是半截正文，不知道它接的是上一条。
+# 这里统一实现并给多块结果加 (n/N) 页码。
+#
+# 注意：页码用 <b>，必须在 sanitize_html 之后再加，否则尖括号会被转义成实体。
+# 两个 bot 的调用点都保证了"进入本函数时文本已清洗"。
+
+_PAGE_MARKER_BUDGET = 24   # "<b>（10/10）</b>\n\n" 的宽裕上限，先从预算里扣掉
+
+
+def paginate_telegram(text: str, max_len: int = 4096) -> list[str]:
+    """把稿件切成若干条 Telegram 消息；超过一条时每条顶部加 (n/N) 页码。
+
+    切分点只落在段落边界（\\n\\n），保证单条新闻不会被腰斩。"""
+    if not text:
+        return []
+    if len(text) <= max_len:
+        return [text]
+
+    limit = max_len - _PAGE_MARKER_BUDGET
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for para in text.split("\n\n"):
+        needed = len(para) + (2 if current else 0)   # 2 = '\n\n' 分隔符
+        if current_len + needed > limit and current:
+            chunks.append("\n\n".join(current))
+            current, current_len = [para], len(para)
+        else:
+            current.append(para)
+            current_len += needed
+    if current:
+        chunks.append("\n\n".join(current))
+
+    if len(chunks) <= 1:
+        return chunks
+    total = len(chunks)
+    return [f"<b>（{i}/{total}）</b>\n\n{c}" for i, c in enumerate(chunks, 1)]
+
+
+# ───────────────────────────────────────────────
+# 10) update_zero_streak — RSS 源连续零产追踪
+# ───────────────────────────────────────────────
+# "零产" = 该源当天抓到了条目、但过滤后一条都没进正文（过期/重复/已播/不相关）。
+# 单日零产是慢更新源的常态，连续多日零产才说明这个源该换掉了。
+# 本函数是 .zero_streak.json 的唯一写入方（fetch 阶段调用），health_check 只读不写，
+# 避免两处各加一次导致天数翻倍。
+
+def update_zero_streak(path, zero_sources, all_sources, threshold: int = 3) -> dict:
+    """更新各源连续零产天数，返回达到阈值的 {源: 天数}（建议移除的源）。
+
+    zero_sources 里的源天数 +1；本次有产出的源清零并移出档案。"""
+    p = Path(path)
+    try:
+        streak = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(streak, dict):
+            streak = {}
+    except Exception:
+        streak = {}
+
+    zero = set(zero_sources)
+    for s in zero:
+        streak[s] = int(streak.get(s, 0)) + 1
+    # 只保留本次仍然零产的源：有产出的清零，已从配置里删掉的也随之消失
+    # （zero_sources 必然是 all_sources 的子集，故一个判断就够）
+    streak = {s: n for s, n in streak.items() if s in zero}
+
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(json.dumps(streak, ensure_ascii=False), encoding="utf-8")
+    except Exception as e:
+        print(f"[WARN] zero_streak 写入失败: {e}")
+
+    return {s: n for s, n in sorted(streak.items()) if n >= threshold}
