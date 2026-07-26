@@ -1,7 +1,7 @@
 #!/bin/bash
 # auto_repair_base.sh — 共享自愈逻辑（Crypto Daily Bot / AI Daily News Bot 共用）
 #
-# 2026-07-20 从 ~/Desktop/bot_ops/auto_repair_base.sh 迁入 ~/bots/shared/ 并修复：
+# 2026-07-20 从 ~/Desktop/bot_ops/auto_repair_base.sh 迁入 ~/Desktop/bots/shared/ 并修复：
 #   1. rerun() 原来裸跑 `python3 <script>` —— 缺必填的 --mode 参数、也不加载
 #      plist 环境变量（无 token/代理），重跑必然失败。现改为走 claude_report.sh send。
 #   2. 新增 drafts_fresh() 稿件新鲜度检查：稿件是 Claude 写的，重跑补不了稿；

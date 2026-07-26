@@ -7,7 +7,7 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 > ⚠️ 备份教训：本目录原本不在任何 GitHub 仓库里，换电脑时 `bot_utils.py` 丢失、
 > 整套工作流跑不起来。现已单独纳入版本控制，**改动后请记得 commit + push**。
 
-> 📍 位置变更（2026-07-21）：本目录已从 `~/Desktop/bot_ops/` 迁到 `~/bots/shared/`，
+> 📍 位置变更（2026-07-21）：本目录已从 `~/Desktop/bot_ops/` 迁到 `~/Desktop/bots/shared/`，
 > 与两个 bot 同级，Python 与 Shell 的引用路径统一。原 Desktop 目录已废弃。
 
 ## 内容
@@ -20,9 +20,9 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 
 ## 两个 bot 如何引用本目录
 
-- Python：脚本顶部 `sys.path.insert(0, ~/bots/shared)` 后 `from bot_utils import ...`
+- Python：脚本顶部 `sys.path.insert(0, ~/Desktop/bots/shared)` 后 `from bot_utils import ...`
 - Shell：各 bot 的 `auto_repair.sh` / `claude_catchup.sh` 薄包装设好变量后
-  `source ~/bots/shared/auto_repair_base.sh`（或 `headless_catchup_base.sh`）
+  `source ~/Desktop/bots/shared/auto_repair_base.sh`（或 `headless_catchup_base.sh`）
 
 ## 每日时间线
 
