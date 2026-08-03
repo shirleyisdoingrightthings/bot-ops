@@ -498,3 +498,56 @@ def resolve_proxy(configured: str | None, candidates=PROXY_CANDIDATES,
             return alt, True
 
     return None, False
+
+
+# ───────────────────────────────────────────────
+# 12) 美股相关性闸门 — 只给泛财经源用
+# ───────────────────────────────────────────────
+# 背景：Fortune 这类综合商业媒体的 feed 里，美股内容与英国政治、名人创业、
+# 海外就业市场混在一起。垂直财经源（CNBC 财报线、MarketWatch 市场线）不过闸，
+# 避免误伤标题不含关键词的正当选题。与 is_ai_relevant 是同一套设计。
+
+_MKT_KEYWORDS = (
+    # 市场与指数
+    "stock", "stocks", "shares", "equity", "equities", "market", "markets",
+    "s&p", "nasdaq", "dow jones", "russell", "index", "indices", "wall street",
+    "bull market", "bear market", "rally", "selloff", "sell-off", "correction",
+    # 公司财务
+    "earnings", "revenue", "profit", "guidance", "outlook", "quarter",
+    "dividend", "buyback", "valuation", "ipo", "merger", "acquisition",
+    "takeover", "spinoff", "downgrade", "upgrade", "price target",
+    # 宏观与货币
+    "federal reserve", "fed ", "interest rate", "rate cut", "rate hike",
+    "inflation", "cpi", "jobs report", "payrolls", "gdp", "recession",
+    "treasury", "yield", "bond", "dollar", "tariff",
+    # 汇率与大宗（日元干预、油价这类宏观题材常不含"stock/market"字样）
+    "yen", "euro", "currency", "currencies", "forex", "exchange rate",
+    "central bank", "intervention", "devalua",
+    "oil price", "crude", "brent", "opec", "commodity", "commodities",
+    "gold price", "barrel",
+    # 投资主体
+    "investor", "investors", "hedge fund", "etf", "portfolio", "analyst",
+    "nyse", "sec filing", "shareholder", "ceo", "cfo",
+)
+
+# 单独成词才算命中的短词，避免 "fed" 匹配到 "federal/feed"
+_MKT_WORD_RE = re.compile(
+    r"\b(?:fed|ipo|etf|sec|nyse|cpi|gdp|eps|ceo|cfo|q[1-4]|oil|gas|yen)\b",
+    re.IGNORECASE)
+# 连续 2-5 个大写字母且独立成词 —— 股票代码的形态（NVDA、AAPL、TSLA）
+_TICKER_RE = re.compile(r"(?<![A-Za-z])[A-Z]{2,5}(?![A-Za-z])")
+
+
+def is_market_relevant(title: str, summary: str = "") -> bool:
+    """判断一条泛财经源新闻是否与美股/宏观市场相关。标题或摘要命中即通过。"""
+    blob = f"{title or ''} {summary or ''}"
+    if not blob.strip():
+        return False
+    low = blob.lower()
+    if _MKT_WORD_RE.search(low):
+        return True
+    if any(kw in low for kw in _MKT_KEYWORDS):
+        return True
+    # 标题里出现股票代码形态的全大写词也算（排除常见非代码缩写）
+    _NOT_TICKER = {"US", "UK", "EU", "AI", "UN", "TV", "PM", "AM", "CEO", "CFO", "NEW"}
+    return any(t not in _NOT_TICKER for t in _TICKER_RE.findall(title or ""))
