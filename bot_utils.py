@@ -440,3 +440,59 @@ def update_zero_streak(path, zero_sources, all_sources, threshold: int = 3) -> d
         print(f"[WARN] zero_streak 写入失败: {e}")
 
     return {s: n for s, n in sorted(streak.items()) if n >= threshold}
+
+
+# ───────────────────────────────────────────────
+# 11) resolve_proxy — 代理端口自愈
+# ───────────────────────────────────────────────
+# 背景：代理端口写死在 plist 里，用户换代理软件（Shadowrocket / Clash 等）
+# 端口就变。历史上发生过两次（7897 → 7892 → 1082），最近一次让两个 bot
+# 静默停摆 3 天——脚本只知道"配置的端口不通"，不会尝试任何替代。
+#
+# 策略：先试配置端口；不通则依次探测候选端口，命中即改用并告警。
+# 探测用 gstatic 的 204 端点（轻量、无内容、境外可达性可靠）。
+
+PROXY_CANDIDATES = ("1082", "7897")
+_PROBE_URL = "https://www.gstatic.com/generate_204"
+
+
+def _probe(proxy_url: str, timeout: int = 5) -> bool:
+    try:
+        requests.get(_PROBE_URL, proxies={"http": proxy_url, "https": proxy_url},
+                     timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def resolve_proxy(configured: str | None, candidates=PROXY_CANDIDATES,
+                  timeout: int = 5) -> tuple[str | None, bool]:
+    """返回 (可用代理 URL, 是否发生了端口切换)。
+
+    - configured 为空 → (None, False)，调用方视为直连放行
+    - configured 可用 → (configured, False)
+    - configured 不通但某候选端口可用 → (该候选, True)
+    - 全都不通 → (None, False)，调用方按代理不可用处理
+
+    候选端口探测失败每个只花 timeout 秒上限，默认两个候选最多 10 秒。"""
+    if not configured:
+        return None, False
+
+    if _probe(configured, timeout):
+        return configured, False
+
+    # 从配置值里拆出 scheme 与 host，只替换端口
+    m = re.match(r"^(https?://)([^:/]+)(?::(\d+))?", configured.strip())
+    scheme = m.group(1) if m else "http://"
+    host = m.group(2) if m else "127.0.0.1"
+    cur_port = m.group(3) if m else None
+
+    for port in candidates:
+        if port == cur_port:
+            continue          # 已经试过配置端口了
+        alt = f"{scheme}{host}:{port}"
+        if _probe(alt, timeout):
+            print(f"[bot_utils] 配置的代理 {configured} 不通，已自动改用 {alt}")
+            return alt, True
+
+    return None, False

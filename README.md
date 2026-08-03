@@ -28,8 +28,8 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 
 | 时间 | 环节 | 执行者 |
 |---|---|---|
-| 08:30 | 主力：抓取 → Claude 写稿 → 推送 Telegram | Claude App 定时任务 `morning-catchup-daily-bots` |
-| 09:45 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
+| 10:00 | 主力：抓取 → Claude 写稿 → 推送 Telegram | Claude App 定时任务 `morning-catchup-daily-bots` |
+| 11:00 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
 | 随时 | 人工补发 | Claude App 手动任务 `manual-resend-daily-bots` |
 
 各 bot 的主 plist（`com.shirley.*-bot`）**不再承担调度职责**，仅作为密钥与代理的
