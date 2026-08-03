@@ -2,23 +2,23 @@
 
 Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈逻辑。三个 bot 仓库
 （`crypto-daily-bot`、`AI-Daily-News-Bot`、`us-stock-bot`）各自独立，但通过本目录共享"形式和运行方式"：
-改这里的代码，两个 bot 同时生效。
+改这里的代码，三个 bot 同时生效。
 
 > ⚠️ 备份教训：本目录原本不在任何 GitHub 仓库里，换电脑时 `bot_utils.py` 丢失、
 > 整套工作流跑不起来。现已单独纳入版本控制，**改动后请记得 commit + push**。
 
-> 📍 位置变更（2026-07-21）：本目录已从 `~/Desktop/bot_ops/` 迁到 `~/Desktop/bots/shared/`，
-> 与两个 bot 同级，Python 与 Shell 的引用路径统一。原 Desktop 目录已废弃。
+> 📍 当前位置：`~/Desktop/bots/shared/`，与三个 bot 同级。各 bot 用 `Path(__file__).resolve().parent.parent / "shared"`
+> 从脚本自身位置推导本目录，因此整个 `bots` 文件夹搬到任何位置都不需要改代码（launchd plist 因格式限制仍需绝对路径）。
 
 ## 内容
 
 | 文件 | 作用 |
 |---|---|
-| `bot_utils.py` | 两个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（泛科技源的 AI 相关性闸门）<br>**推送与监控** `paginate_telegram`（4096 切分 + 页码）/ `update_zero_streak`（RSS 源连续零产追踪） |
+| `bot_utils.py` | 三个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（AI 相关性）/ `is_market_relevant`（美股相关性），均只给泛源用<br>**推送与监控** `paginate_telegram`（4096 切分 + 页码）/ `update_zero_streak`（连续零产追踪）/ `resolve_proxy`（代理端口自愈） |
 | `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑；仍失败则移交无头补跑 |
 | `headless_catchup_base.sh` | 共享无头补跑逻辑：用本机 `claude` CLI 无人值守完整重走 fetch → 写稿 → send，等价于手动 Run Now |
 
-## 两个 bot 如何引用本目录
+## 三个 bot 如何引用本目录
 
 - Python：脚本顶部 `sys.path.insert(0, ~/Desktop/bots/shared)` 后 `from bot_utils import ...`
 - Shell：各 bot 的 `auto_repair.sh` / `claude_catchup.sh` 薄包装设好变量后
@@ -42,7 +42,7 @@ Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈�
 
 ## 跨天去重与源淘汰
 
-两个 bot 的时间窗（AI 24h / Crypto 3 天）都拦不住"同一条新闻连续多天入选"，
+三个 bot 的时间窗（AI 24h / Crypto 3 天 / 美股 48h）都拦不住"同一条新闻连续多天入选"，
 因为脚本内的 `seen_urls` 只在单次运行内有效。现由共享层统一处理：
 
 - **去重**：`send` 成功后从稿件里抽 `<a href>` 记入各 bot 的 `logs/sent_urls.json`

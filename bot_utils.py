@@ -1,24 +1,34 @@
 """
-bot_utils.py — 两个 Bot（Crypto Daily Bot / AI Daily News Bot）共用的工具库。
+bot_utils.py — 三个 Bot（AI Daily News / Crypto Daily / US Stock）共用的工具库。
 
-⚠️ 说明：本文件曾因游离在版本控制之外、换电脑后丢失，故由 Claude 依据 crypto_report.py
-与 daily_report.py 的实际调用契约重建。现已纳入 git 仓库
-（~/Desktop/bot_ops，remote: github.com/shirleyisdoingrightthings/bot-ops）——
-改动请务必 commit 并 push，勿再让它游离在仓库外。两个 bot 通过
-sys.path.insert(~/Desktop/bot_ops/shared) 共用本文件。
+⚠️ 说明：本文件曾因游离在版本控制之外、换电脑后丢失，故由 Claude 依据各 bot 主脚本
+的实际调用契约重建。现已纳入独立 git 仓库（remote: github.com/shirleyisdoingrightthings/bot-ops）
+——改动请务必 commit 并 push，勿再让它游离在仓库外。
+
+三个 bot 通过 `sys.path.insert(Path(__file__).resolve().parent.parent / "shared")`
+从脚本自身位置推导本目录，因此整个 bots 文件夹搬到任何位置都不需要改路径。
 
 导出函数：
+  基础
   - sanitize_html(text)            把 AI 输出清洗为 Telegram 可接受的 HTML
   - with_retry(...)                带退避的重试装饰器工厂
   - fetch_rss(feed_url, limit)     抓取并解析 RSS，返回 entries 列表（失败返回 []）
   - parse_entry_date(entry)        解析 RSS 条目时间，返回 UTC tz-aware datetime 或 None
   - already_ran_today(log_file)    今天是否已成功跑过（日志含当天 [OK] 记录）
+  取材
   - fetch_article_text(url)        best-effort 抓文章正文全文（零依赖），失败/过短返回 ""
-  - url_key(url)                   URL 归一化（去 query/fragment/尾斜杠、转小写），用作去重键
-  - load_sent_urls(path)           读出最近 N 天已推送过的 URL 键集合（跨天去重用）
+  跨天去重
+  - url_key(url)                   URL 归一化（去 query/fragment/尾斜杠、转小写）
+  - load_sent_urls(path)           读出最近 N 天已推送过的 URL 键集合
   - record_sent_urls(path, urls)   记录本次实际推送的 URL 并按保留期裁剪
-  - extract_hrefs(html_text)       从稿件里抽出 <a href="..."> 的 URL（记录"真正播出去的"）
-  - is_ai_relevant(title, summary) 泛科技源的 AI 相关性闸门（垂直源不需要）
+  - extract_hrefs(html_text)       从稿件里抽出 <a href="..."> 的 URL
+  选题过滤（泛源闸门，垂直源不过闸）
+  - is_ai_relevant(title, summary)      AI 相关性（AI Daily News Bot 用）
+  - is_market_relevant(title, summary)  美股/宏观相关性（US Stock Bot 用）
+  推送与监控
+  - paginate_telegram(text)        4096 切分 + (n/N) 页码
+  - update_zero_streak(...)        RSS 源连续零产追踪，达阈值返回建议淘汰的源
+  - resolve_proxy(configured)      代理端口自愈，返回 (可用代理, 是否切换)
 """
 
 from __future__ import annotations
@@ -253,7 +263,7 @@ def fetch_article_text(url: str, timeout: int = 10,
 # ───────────────────────────────────────────────
 # 7) 跨天去重 — 记住"真正推送过"的 URL
 # ───────────────────────────────────────────────
-# 背景：两个 bot 的时间窗口（AI 24h / Crypto 3 天）都可能让同一条新闻在连续
+# 背景：三个 bot 的时间窗口（AI 24h / Crypto 3 天 / 美股 48h）都可能让同一条新闻在连续
 # 多天进入 context——各脚本内的 seen_urls 只在单次运行内有效，拦不住跨天重复。
 # 策略：send 成功后，从稿件里抽出实际用到的 <a href> 记进 logs/sent_urls.json；
 # 下次 fetch 时据此排除。记录点选在 send 成功之后而不是 fetch 时，这样发送失败
@@ -370,7 +380,7 @@ def is_ai_relevant(title: str, summary: str = "") -> bool:
 # 这里统一实现并给多块结果加 (n/N) 页码。
 #
 # 注意：页码用 <b>，必须在 sanitize_html 之后再加，否则尖括号会被转义成实体。
-# 两个 bot 的调用点都保证了"进入本函数时文本已清洗"。
+# 三个 bot 的调用点都保证了"进入本函数时文本已清洗"。
 
 _PAGE_MARKER_BUDGET = 24   # "<b>（10/10）</b>\n\n" 的宽裕上限，先从预算里扣掉
 
