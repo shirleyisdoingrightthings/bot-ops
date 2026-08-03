@@ -452,10 +452,9 @@ def update_zero_streak(path, zero_sources, all_sources, threshold: int = 3) -> d
 # 策略：先试配置端口；不通则依次探测候选端口，命中即改用并告警。
 # 探测用 gstatic 的 204 端点（轻量、无内容、境外可达性可靠）。
 
-# 探测顺序即优先级：先 1082（当前 Shadowrocket），不通再试 7892（上一代配置）。
-# 历史上还用过 7897，如需再加回来直接补进这个元组即可，每多一个候选最多多花
-# 一个 timeout（默认 5 秒），且只在配置端口已经不通时才会走到。
-PROXY_CANDIDATES = ("1082", "7892")
+# 探测顺序即优先级：先 1082（当前 Shadowrocket），不通再试 7897。
+# 每多一个候选最多多花一个 timeout（默认 5 秒），且只在配置端口已经不通时才走到。
+PROXY_CANDIDATES = ("1082", "7897")
 _PROBE_URL = "https://www.gstatic.com/generate_204"
 
 
