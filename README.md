@@ -1,7 +1,7 @@
 # bot-ops — 每日播报 Bot 的共享运行层
 
-Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 bot 仓库
-（`crypto-daily-bot`、`AI-Daily-News-Bot`）各自独立，但通过本目录共享"形式和运行方式"：
+Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈逻辑。三个 bot 仓库
+（`crypto-daily-bot`、`AI-Daily-News-Bot`、`us-stock-bot`）各自独立，但通过本目录共享"形式和运行方式"：
 改这里的代码，两个 bot 同时生效。
 
 > ⚠️ 备份教训：本目录原本不在任何 GitHub 仓库里，换电脑时 `bot_utils.py` 丢失、
@@ -28,7 +28,7 @@ Crypto Daily Bot 与 AI Daily News Bot 共用的工具与自愈逻辑。两个 b
 
 | 时间 | 环节 | 执行者 |
 |---|---|---|
-| 10:00 | 主力：抓取 → Claude 写稿 → 推送 Telegram | Claude App 定时任务 `morning-catchup-daily-bots` |
+| 10:00 | 主力：三个 bot 依次抓取 → Claude 写稿 → 推送 Telegram | Claude App 定时任务 `morning-catchup-daily-bots` |
 | 11:00 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
 | 随时 | 人工补发 | Claude App 手动任务 `manual-resend-daily-bots` |
 
