@@ -4,7 +4,7 @@
 # 作用：当天没有成功出稿时，用本机 claude CLI 无人值守地完整补跑一次
 #       （fetch → 写稿 → send），等价于在 Claude App 里手动点 Run Now。
 # 触发方：
-#   - health_check.sh 的 MISSING 分支（08:30 routine 当天根本没跑）
+#   - health_check.sh 的 MISSING 分支（10:00 routine 当天根本没跑）
 #   - auto_repair_base.sh 的最终失败分支（Level 1/2 自愈无效）
 #
 # 由各 Bot 的 claude_catchup.sh 薄包装在 `source` 之前设置好以下变量：
@@ -66,7 +66,7 @@ fi
 
 # ── 无头补跑 ─────────────────────────────────────────────────────
 log "===== 无头补跑触发：${BOT_NAME}（$CLAUDE_BIN）====="
-PROMPT="你是 ${BOT_NAME} 的无头补跑代理。今天 08:30 的 Claude routine 未能成功出稿，请在本目录完成一次完整补跑：
+PROMPT="你是 ${BOT_NAME} 的无头补跑代理。今天 10:00 的 Claude routine 未能成功出稿，请在本目录完成一次完整补跑：
 1. bash claude_report.sh fetch 获取当日素材；
 2. ${WRITE_SPEC}；
 3. bash claude_report.sh send 推送；
