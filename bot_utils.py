@@ -10,7 +10,7 @@ bot_utils.py — 三个 Bot（AI Daily News / Crypto Daily / US Stock）共用�
 
 导出函数：
   基础
-  - sanitize_html(text)            把 AI 输出清洗为 Telegram 可接受的 HTML
+  - sanitize_html(text)            把 AI 输出清洗为受控的 HTML 中间格式
   - with_retry(...)                带退避的重试装饰器工厂
   - fetch_rss(feed_url, limit)     抓取并解析 RSS，返回 entries 列表（失败返回 []）
   - parse_entry_date(entry)        解析 RSS 条目时间，返回 UTC tz-aware datetime 或 None
@@ -25,8 +25,10 @@ bot_utils.py — 三个 Bot（AI Daily News / Crypto Daily / US Stock）共用�
   选题过滤（泛源闸门，垂直源不过闸）
   - is_ai_relevant(title, summary)      AI 相关性（AI Daily News Bot 用）
   - is_market_relevant(title, summary)  美股/宏观相关性（US Stock Bot 用）
-  推送与监控
-  - paginate_telegram(text)        4096 切分 + (n/N) 页码
+  推送与监控（飞书自定义机器人 webhook）
+  - html_to_lark_md(text)          HTML 稿件 → 飞书卡片 markdown 行列表
+  - paginate_feishu(lines)         按 20KB 请求体上限切分 + (n/N) 页码
+  - send_feishu(text, ...)         整套推送：转换 → 分页 → 带签名 POST（直连不走代理）
   - update_zero_streak(...)        RSS 源连续零产追踪，达阈值返回建议淘汰的源
   - resolve_proxy(configured)      代理端口自愈，返回 (可用代理, 是否切换)
 """
@@ -38,6 +40,9 @@ import re
 import html
 import json
 import time
+import hmac
+import base64
+import hashlib
 import functools
 from datetime import datetime, timezone
 from pathlib import Path
@@ -47,11 +52,12 @@ import feedparser
 
 
 # ───────────────────────────────────────────────
-# 1) sanitize_html — Telegram HTML 安全清洗
+# 1) sanitize_html — HTML 中间格式的安全清洗
 # ───────────────────────────────────────────────
-# Telegram 的 parse_mode=HTML 只接受有限的标签白名单，其余的 < > & 必须转义，
-# 否则整条消息会因 "can't parse entities" 被拒。策略：先把白名单标签原样暂存，
-# 转义其余文本，再把标签还原回去。
+# 稿件用一小撮 HTML 标签（实际只有 <b> 和 <a href>）承载格式，正文里出现的裸
+# < > & 必须转义，否则会被后面的标签解析吃掉——"市值 < 10 亿" 这种写法会连着
+# 后面一大段一起被当成标签。策略：先把白名单标签原样暂存，转义其余文本，
+# 再把标签还原回去。send_feishu 那边做的 unescape 正好是本函数的逆运算。
 
 _ALLOWED_TAGS = r"(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|tg-spoiler|blockquote)"
 # 匹配白名单的开/闭标签（属性中不含尖括号，足以覆盖 <a href="...">）
@@ -373,47 +379,244 @@ def is_ai_relevant(title: str, summary: str = "") -> bool:
 
 
 # ───────────────────────────────────────────────
-# 9) paginate_telegram — 按段落切分 + 页码
+# 9) 飞书推送 — HTML 稿件 → 卡片 markdown → 自定义机器人 webhook
 # ───────────────────────────────────────────────
-# Telegram 单条上限 4096。原先两个 bot 各自实现同一套切分逻辑且不带页码，
-# 读者收到第 2 条时开头直接是半截正文，不知道它接的是上一条。
-# 这里统一实现并给多块结果加 (n/N) 页码。
+# 2026-08 从 Telegram 迁过来时踩的坑，按顺序记下来，别再走回头路：
 #
-# 注意：页码用 <b>，必须在 sanitize_html 之后再加，否则尖括号会被转义成实体。
-# 三个 bot 的调用点都保证了"进入本函数时文本已清洗"。
+#   ① 先选了「富文本 post」，理由是文档写着 text/a 标签支持 style:["bold"]，
+#      正好对上稿件里 <a href><b>标题</b></a> 的加粗超链接。真机一发就被拒：
+#      code=19002 "unknown content value"。style 那套是**应用发消息 API** 的能力，
+#      自定义机器人 webhook 不认。post 里的 md 标签同样不认（code=10002）。
+#   ② post 发得出去，但只能出纯文本 + 不加粗的链接，章节标题会全部失去层次。
+#   ③ 最终用「卡片 2.0 + markdown 元素」。真机实测两种嵌套写法只有一种有效：
+#        **[文字](url)**  → 又蓝又粗 ✅   ← 加粗超链接只能这么写
+#        [**文字**](url)  → 不生效 ❌
+#      顺序反了就白写，改这里之前先在真群里发一条对照消息确认。
+#
+# 关于转义：飞书文档说命中 markdown 语法的字符要转成 &#42; 这类实体。真机实测裸
+# 星号、下划线、尖括号、& 全都原样显示；又扫了 14 份真实存档共 8 万字正文，唯一
+# 命中的是 5 处 [#159] 这种方括号（CommonMark 里不跟 (url) 的方括号是字面量，无害）。
+# 加上 prompt 本来就禁止稿件出现 Markdown 符号，所以这里**不做转义**——盲目转义有
+# 反向风险：万一实体不被解码，群里就会出现一串字面的 &#42;。哪天稿件风格真变了，
+# 在 _md_plain 里加一层即可。
 
-_PAGE_MARKER_BUDGET = 24   # "<b>（10/10）</b>\n\n" 的宽裕上限，先从预算里扣掉
+# 自定义机器人 webhook 的请求体上限 20KB（比应用发消息的 30KB 更严）。
+# 按 UTF-8 字节算，且 body 用 ensure_ascii=False 序列化后手动编码发送：
+# requests 的 json= 参数默认 ensure_ascii=True，一个汉字会膨胀成 \uXXXX 六个 ASCII
+# 字节，同一份稿子要多切一倍的消息。
+FEISHU_BODY_LIMIT = 20 * 1024
+# 给卡片外壳、timestamp+sign、页码行和 JSON 转义留的余量
+_FEISHU_ENVELOPE_BUDGET = 2048
+
+FEISHU_WEBHOOK_ENV = "FEISHU_WEBHOOK"
+FEISHU_SECRET_ENV  = "FEISHU_SECRET"
+# 飞书限频 5 次/秒；页与页之间歇一下，顺便躲开整点前后突发的 11232 限流
+_FEISHU_PAGE_GAP_S = 0.5
+
+_A_RE          = re.compile(r'<a\s+[^>]*?href\s*=\s*["\']([^"\']+)["\'][^>]*>(.*?)</a\s*>', re.I | re.S)
+_B_RE          = re.compile(r'<\s*(b|strong)\s*>(.*?)</\s*\1\s*>', re.I | re.S)
+_STRIP_TAGS_RE = re.compile(r"<[^>]+>")
 
 
-def paginate_telegram(text: str, max_len: int = 4096) -> list[str]:
-    """把稿件切成若干条 Telegram 消息；超过一条时每条顶部加 (n/N) 页码。
+def _md_plain(fragment: str) -> str:
+    """去掉残留标签、还原实体，得到可直接进 markdown 的文本。
 
-    切分点只落在段落边界（\\n\\n），保证单条新闻不会被腰斩。"""
-    if not text:
-        return []
-    if len(text) <= max_len:
-        return [text]
+    sanitize_html 把白名单之外的裸 < > & 转成了实体，这里 unescape 回来，
+    二者互为逆运算——"市值 < 10 亿" 这类正文不会被当成标签吃掉。"""
+    return html.unescape(_STRIP_TAGS_RE.sub("", fragment))
 
-    limit = max_len - _PAGE_MARKER_BUDGET
-    chunks: list[str] = []
-    current: list[str] = []
-    current_len = 0
 
-    for para in text.split("\n\n"):
-        needed = len(para) + (2 if current else 0)   # 2 = '\n\n' 分隔符
-        if current_len + needed > limit and current:
-            chunks.append("\n\n".join(current))
-            current, current_len = [para], len(para)
+def _md_wrap(inner: str, left: str, right: str) -> str:
+    """用 markdown 标记包住文本，但把首尾空白留在标记外面。
+
+    CommonMark 要求标记必须紧贴非空白字符：`** 文字 **` 不会加粗，`**文字**` 才会。
+    稿件里出现 <b> 文字 </b> 这种带空格的写法时，靠这一步救回来。"""
+    core = inner.strip()
+    if not core:
+        return inner
+    lead  = inner[:len(inner) - len(inner.lstrip())]
+    trail = inner[len(inner.rstrip()):]
+    return f"{lead}{left}{core}{right}{trail}"
+
+
+def _md_bold_runs(fragment: str) -> str:
+    """把不含链接的片段转成 markdown：<b>x</b> → **x**，其余原样。"""
+    out, pos = [], 0
+    for m in _B_RE.finditer(fragment):
+        if m.start() > pos:
+            out.append(_md_plain(fragment[pos:m.start()]))
+        out.append(_md_wrap(_md_plain(m.group(2)), "**", "**"))
+        pos = m.end()
+    if pos < len(fragment):
+        out.append(_md_plain(fragment[pos:]))
+    return "".join(out)
+
+
+def html_to_lark_md(text: str) -> list:
+    """把 <b>/<a href> 方言的稿件转成飞书卡片 markdown 的行列表（一行一个元素）。
+
+    href 只认 http/https，其余（javascript: 之类）连同标签一起降级成纯文本。"""
+    lines = []
+    for line in (text or "").split("\n"):
+        buf, pos = [], 0
+        for m in _A_RE.finditer(line):
+            if m.start() > pos:
+                buf.append(_md_bold_runs(line[pos:m.start()]))
+            href  = html.unescape(m.group(1)).strip()
+            inner = m.group(2)
+            label = _md_plain(inner).strip()
+            if label and href.lower().startswith(("http://", "https://")):
+                link = f"[{label}]({href})"
+                # 加粗超链接只有 **[文字](url)** 这一种写法有效，见本节开头
+                buf.append(f"**{link}**" if _B_RE.search(inner) else link)
+            elif label:
+                buf.append(_md_bold_runs(inner))
+            pos = m.end()
+        if pos < len(line):
+            buf.append(_md_bold_runs(line[pos:]))
+        lines.append("".join(buf))
+    return lines
+
+
+def _card_payload(md: str, secret=None) -> dict:
+    payload = {"msg_type": "interactive",
+               "card": {"schema": "2.0",
+                        "config": {"update_multi": True},
+                        "body": {"elements": [{"tag": "markdown", "content": md}]}}}
+    if secret:
+        ts = str(int(time.time()))
+        payload["timestamp"] = ts
+        payload["sign"] = _feishu_sign(ts, secret)
+    return payload
+
+
+def _payload_bytes(md: str) -> int:
+    """整条请求体的实际字节数（签名字段按最长情形预留在 ENVELOPE 里）。"""
+    return len(json.dumps(_card_payload(md), ensure_ascii=False).encode("utf-8"))
+
+
+def _line_cost(line: str) -> int:
+    """单行进 JSON 后的字节数。json.dumps 带的两个引号正好抵掉换行转义成 \\n 的开销。"""
+    return len(json.dumps(line, ensure_ascii=False).encode("utf-8"))
+
+
+def _greedy_pages(lines: list, budget: int) -> list:
+    """按预算顺序塞行；切分点只落在行边界，保证单条新闻不会被腰斩。
+
+    单行本身就超预算时不再细分，让它单独成页——宁可让飞书退这一条，
+    也不要把一条新闻从中间劈开。"""
+    pages, current, size = [], [], 0
+    for line in lines:
+        cost = _line_cost(line)
+        if current and size + cost > budget:
+            pages.append(current)
+            current, size = [line], cost
         else:
-            current.append(para)
-            current_len += needed
+            current.append(line)
+            size += cost
     if current:
-        chunks.append("\n\n".join(current))
+        pages.append(current)
+    return pages
 
-    if len(chunks) <= 1:
-        return chunks
-    total = len(chunks)
-    return [f"<b>（{i}/{total}）</b>\n\n{c}" for i, c in enumerate(chunks, 1)]
+
+def paginate_feishu(lines: list, max_bytes: int = 0) -> list:
+    """把 markdown 行切成若干条消息，返回每条的 markdown 正文。
+
+    超过一条时每条顶部加加粗的 (n/N) 页码。分页做二次均衡：直接贪心塞满会留下一个
+    很短的尾页（实测某天的 AI 日报切成 18.8KB + 0.5KB，第二条只有两行），所以先用
+    上限求出最少页数 n，再从 总量/n 起步收紧预算，找出仍能装进 n 页的最小预算。
+    最后按真实请求体大小复核一遍，超了就收紧重切——估算口径出偏差也不会发到飞书才发现。"""
+    if not lines:
+        return []
+    if max_bytes <= 0:
+        max_bytes = FEISHU_BODY_LIMIT - _FEISHU_ENVELOPE_BUDGET
+
+    for _ in range(6):
+        pages = _greedy_pages(lines, max_bytes)
+
+        if len(pages) > 1:
+            target = -(-sum(_line_cost(x) for x in lines) // len(pages))   # 向上取整
+            while target <= max_bytes:
+                balanced = _greedy_pages(lines, target)
+                if len(balanced) <= len(pages):
+                    pages = balanced
+                    break
+                target = int(target * 1.05) + 1   # 均分装不下（长行挤兑），放宽再试
+
+        total = len(pages)
+        out = ["\n".join(pg) for pg in pages] if total == 1 else \
+              [f"**（{i}/{total}）**\n\n" + "\n".join(pg) for i, pg in enumerate(pages, 1)]
+
+        if all(_payload_bytes(md) <= FEISHU_BODY_LIMIT for md in out):
+            return out
+        max_bytes = int(max_bytes * 0.9)          # 复核没过，收紧 10% 重来
+
+    raise ValueError("分页失败：单行内容超出飞书 20KB 请求体上限，无法再切分")
+
+
+# 发送走独立 Session 并显式关掉 trust_env：三个 bot 为了抓墙外 RSS 会把
+# HTTP_PROXY/HTTPS_PROXY 写进 os.environ，而飞书本来就直连可达，绕代理只是
+# 平白多一个故障点——代理挂掉的日子不该连播报一起停摆。
+_FEISHU_SESSION = requests.Session()
+_FEISHU_SESSION.trust_env = False
+_FEISHU_SESSION.proxies = {}
+
+
+def _feishu_sign(timestamp: str, secret: str) -> str:
+    """签名 = HMAC-SHA256(key = "timestamp\n密钥", msg = 空) 再 base64。
+
+    注意被签的是空消息体、密钥反而当 key 用，这是飞书的规定，不是笔误。"""
+    string_to_sign = f"{timestamp}\n{secret}"
+    digest = hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
+    return base64.b64encode(digest).decode("utf-8")
+
+
+@with_retry(max_retries=3, base_delay=5, exceptions=(requests.RequestException,))
+def _feishu_send_card(webhook: str, secret, md: str) -> None:
+    # 手动序列化：ensure_ascii=False 让汉字按 UTF-8 占 3 字节而不是 \uXXXX 的 6 字节，
+    # 与分页的字节预算保持同一口径
+    body = json.dumps(_card_payload(md, secret), ensure_ascii=False).encode("utf-8")
+    resp = _FEISHU_SESSION.post(
+        webhook, data=body,
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        timeout=30,
+    )
+    if not resp.ok:
+        raise requests.RequestException(f"飞书 HTTP {resp.status_code}: {resp.text[:300]}")
+    # 飞书失败时照样返回 HTTP 200，成败只看响应体里的 code/StatusCode
+    try:
+        data = resp.json()
+    except Exception:
+        raise requests.RequestException(f"飞书返回非 JSON：{resp.text[:300]}")
+    code = data.get("code", data.get("StatusCode", 0))
+    if code not in (0, "0"):
+        msg = data.get("msg") or data.get("StatusMessage") or resp.text[:300]
+        raise requests.RequestException(f"飞书返回错误 code={code}：{msg}")
+
+
+def send_feishu(text: str, webhook: str = "", secret=None) -> int:
+    """把一份（已 sanitize_html 的）稿件推送到飞书自定义机器人，返回实际发出的条数。
+
+    webhook/secret 缺省从环境变量 FEISHU_WEBHOOK / FEISHU_SECRET 读取。
+    没配 webhook 直接抛错、绝不静默吞掉——静默成功会让 health_check 也看不出问题。"""
+    # 空稿直接返回：三个 bot 的 run_send 都已挡过一道，这里是兜底——
+    # 宁可不发，也不要推一条空白消息出去。
+    if not (text or "").strip():
+        return 0
+
+    hook = webhook or os.getenv(FEISHU_WEBHOOK_ENV, "")
+    if not hook.startswith("http"):
+        raise ValueError(
+            f"未配置飞书 webhook（环境变量 {FEISHU_WEBHOOK_ENV}）——"
+            "请在飞书群「设置 → 群机器人 → 添加机器人 → 自定义机器人」里取得地址")
+    sec = secret if secret is not None else os.getenv(FEISHU_SECRET_ENV, "")
+
+    pages = paginate_feishu(html_to_lark_md(text))
+    for i, md in enumerate(pages):
+        if i:
+            time.sleep(_FEISHU_PAGE_GAP_S)
+        _feishu_send_card(hook, sec or None, md)
+    return len(pages)
 
 
 # ───────────────────────────────────────────────

@@ -27,7 +27,7 @@ cp ~/Desktop/bots/shared/scheduled-tasks/morning-catchup-daily-bots/SKILL.md \
 把这个任务重新设为每天 10:00 触发，否则它只会以「手动」状态存在、不会自己跑。
 
 另外这三件东西也不在任何仓库里，换机时要一并处理：
-- `~/Library/LaunchAgents/com.shirley.*-bot.plist`（Telegram token 与代理端口的权威源，含密钥，**不要**提交到仓库）
+- `~/Library/LaunchAgents/com.shirley.*-bot.plist`（飞书 webhook 与代理端口的权威源，含密钥，**不要**提交到仓库）
 - `~/Library/LaunchAgents/com.shirley.*-bot-health.plist`（11:00 体检的调度）
 - 各 bot 的 `logs/`（含 `sent_urls.json` 跨天去重档案与 `archive/` 稿件存档，丢了不影响运行，只是去重与周回顾要重新攒）
 

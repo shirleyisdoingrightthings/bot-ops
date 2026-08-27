@@ -1,6 +1,6 @@
 ---
 name: morning-catchup-daily-bots
-description: 每早 10:00 由 Claude 亲自写稿并推送三个 Telegram 播报 bot
+description: 每早 10:00 由 Claude 亲自写稿并推送三个飞书播报 bot
 ---
 
 目标：三个本地日报由本任务（Claude）每早亲自写稿并推送——抓取 → Claude 按各自 prompt 写稿 → 发送。本任务是唯一的写稿入口。

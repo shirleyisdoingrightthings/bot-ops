@@ -14,7 +14,7 @@ Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈�
 
 | 文件 | 作用 |
 |---|---|
-| `bot_utils.py` | 三个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（AI 相关性）/ `is_market_relevant`（美股相关性），均只给泛源用<br>**推送与监控** `paginate_telegram`（4096 切分 + 页码）/ `update_zero_streak`（连续零产追踪）/ `resolve_proxy`（代理端口自愈） |
+| `bot_utils.py` | 三个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（AI 相关性）/ `is_market_relevant`（美股相关性），均只给泛源用<br>**推送与监控** `html_to_lark_md`（HTML 稿件 → 飞书卡片 markdown）/ `paginate_feishu`（20KB 切分 + 页码 + 长度均衡）/ `send_feishu`（带签名直连推送）/ `update_zero_streak`（连续零产追踪）/ `resolve_proxy`（代理端口自愈） |
 | `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑；仍失败则移交无头补跑 |
 | `headless_catchup_base.sh` | 共享无头补跑逻辑：用本机 `claude` CLI 无人值守完整重走 fetch → 写稿 → send，等价于手动 Run Now |
 | `scheduled-tasks/` | Claude 定时任务 prompt 的版本化副本（原件在 `~/.claude/scheduled-tasks/`，不属于任何仓库，换机即丢）。恢复步骤与同步纪律见该目录 README |
@@ -29,7 +29,7 @@ Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈�
 
 | 时间 | 环节 | 执行者 |
 |---|---|---|
-| 10:00 | 主力：三个 bot 依次抓取 → Claude 写稿 → 推送 Telegram | Claude App 定时任务 `morning-catchup-daily-bots`（prompt 备份在 `scheduled-tasks/`） |
+| 10:00 | 主力：三个 bot 依次抓取 → Claude 写稿 → 推送飞书 | Claude App 定时任务 `morning-catchup-daily-bots`（prompt 备份在 `scheduled-tasks/`） |
 | 11:00 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
 | 随时 | 人工补发 | Claude App 手动任务 `manual-resend-daily-bots` |
 
