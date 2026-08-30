@@ -31,12 +31,18 @@ bot_utils.py — 三个 Bot（AI Daily News / Crypto Daily / US Stock）共用�
   - send_feishu(text, ...)         整套推送：转换 → 分页 → 带签名 POST（直连不走代理）
   - update_zero_streak(...)        RSS 源连续零产追踪，达阈值返回建议淘汰的源
   - resolve_proxy(configured)      代理端口自愈，返回 (可用代理, 是否切换)
+  主脚本公共构件（三个 bot 曾各抄一份）
+  - make_logger(log, jsonl)        返回该 bot 的 write_log(status, msg, metrics)
+  - make_pending_saver(cache)      返回该 bot 的 save_pending(messages)
+  - proxy_ok(configured, session)  代理预检 + 端口自愈，返回 (是否放行, 生效代理)
+  - emit_fetch_output(lines, path) fetch 的 stdout 一次性输出并落盘一份
 """
 
 from __future__ import annotations
 
 import os
 import re
+import sys
 import html
 import json
 import time
@@ -764,3 +770,97 @@ def is_market_relevant(title: str, summary: str = "") -> bool:
     # 标题里出现股票代码形态的全大写词也算（排除常见非代码缩写）
     _NOT_TICKER = {"US", "UK", "EU", "AI", "UN", "TV", "PM", "AM", "CEO", "CFO", "NEW"}
     return any(t not in _NOT_TICKER for t in _TICKER_RE.findall(title or ""))
+
+
+# ───────────────────────────────────────────────
+# 13) 主脚本公共构件 — 三个 bot 逐字重复的那几块
+# ───────────────────────────────────────────────
+# 背景：write_log / save_pending / _proxy_ok 三份逐字相同（_proxy_ok 已经开始漂移：
+# us stock 版与另两份不一致），run_fetch 的收尾也是同构的。每加一个 bot 就再抄一遍，
+# 且抄完各自演化。这里把它们收进共享层，各 bot 只留一行绑定。
+#
+# 用工厂函数而不是"多传两个路径参数"，是为了让各 bot 的调用点一个字都不用改
+# ——write_log("WARN", ...) 在三个脚本里共有 22 处。
+
+def make_logger(log_file, jsonl_file):
+    """返回绑定到指定路径的 write_log(status, message, metrics=None)。
+
+    行格式 "{%Y-%m-%d %H:%M}  [{status}]  {message}"，与 already_ran_today 的
+    当天幂等判断相互约定，不要改。metrics 非空时额外追加一行 JSONL 供 health_check 读。
+    注意 print(line) 走 stdout：fetch 模式下这会混进 marker 流，属既有行为，
+    routine 靠 marker 解析不受影响，这里保持原样不动。"""
+    log_file, jsonl_file = Path(log_file), Path(jsonl_file)
+
+    def write_log(status: str, message: str, metrics: dict = None) -> None:
+        ts   = datetime.now().strftime("%Y-%m-%d %H:%M")
+        line = f"{ts}  [{status}]  {message}\n"
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(line)
+        print(line, end="")
+        if metrics:
+            record = {"ts": ts, "status": status, "msg": message, **metrics}
+            with open(jsonl_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    return write_log
+
+
+def make_pending_saver(cache_file):
+    """返回绑定到指定路径的 save_pending(messages)。
+
+    推送失败时的兜底副本，**不做自动重发**——跨天重发旧稿比丢一次更糟，
+    当天补救由 health_check → claude_catchup 重走完整流程负责。"""
+    cache_file = Path(cache_file)
+
+    def save_pending(messages: list) -> None:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump({"ts": datetime.now().isoformat(), "messages": messages},
+                      f, ensure_ascii=False)
+
+    return save_pending
+
+
+def proxy_ok(configured: str | None, session=None) -> tuple[bool, str | None]:
+    """代理预检 + 端口自愈，返回 (是否放行, 此后应使用的代理)。
+
+    - 没配代理 → (True, None)，视为直连放行
+    - 配了且通 → (True, 该代理)
+    - 配了不通但候选端口通 → 就地改写环境变量与 session.proxies，返回 (True, 新代理)
+    - 全都不通 → (False, 原配置值)，保留原值是为了让调用方能打进 SKIP_PROXY 的报错里
+
+    session 传 requests.Session 时一并改其 proxies；AI bot 不持有自己的 Session，
+    传 None 即可（抓取侧走 bot_utils 的 requests + feedparser，两者都只认环境变量）。
+
+    ⚠️ 未来若加国内数据源的 bot（如 A 股），不要照抄这个前置闸门：
+    国内接口不需要代理，代理挂了反而会让 bot 误判为"不可用"而整体跳过。"""
+    resolved, switched = resolve_proxy(configured)
+    if resolved is None:
+        return (not configured), configured
+    if switched:
+        if session is not None:
+            session.proxies = {"http": resolved, "https": resolved}
+        # feedparser 走 urllib，必须同步环境变量（用赋值而非 setdefault）
+        os.environ["HTTP_PROXY"]  = resolved
+        os.environ["HTTPS_PROXY"] = resolved
+    return True, resolved
+
+
+def emit_fetch_output(lines, save_to=None) -> str:
+    """把 fetch 阶段要给 routine 的全部 stdout 一次性打出去，同时落盘一份。
+
+    起因：fetch 的 context 此前只走 stdout，调用方一旦截断（tail/head）或进程
+    中途断掉，这一轮抓来的素材就没了，只能重打一遍外部 API。落盘之后，写稿失败
+    重写、auto_repair 复现、事后复盘都能直接读文件。
+
+    落盘失败只在 stderr 抱怨一句，绝不影响正常输出——它是附带品，不是主路径。"""
+    payload = "\n".join(str(x) for x in lines)
+    print(payload)
+    if save_to:
+        try:
+            path = Path(save_to)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            path.write_text(f"# fetch 生成于 {stamp}\n{payload}\n", encoding="utf-8")
+        except Exception as e:
+            print(f"  ⚠️ context 落盘失败（不影响本次输出）：{e}", file=sys.stderr)
+    return payload
