@@ -84,3 +84,39 @@ Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈�
 
 由各 bot 的 health plist 环境变量 `ENABLE_CLAUDE_REPAIR` 控制（`1`=开 / 缺省=关）。
 依赖本机已安装并登录的 `claude` CLI；`auto_repair_base.sh` 会按多路径探测其绝对位置。
+
+### ⚠️ claude CLI 断链导致安全网静默失效（2026-09-01 修复）
+
+`~/.local/bin/claude` 曾是指向 `~/.local/share/claude/versions/<版本号>` 的软链。
+Claude 升级后旧版本目录被清理，**软链断掉但没人发现**——探测循环用 `[ -x ]` 判定，
+断链过不了，`CLAUDE_BIN` 为空，于是四个 bot 的 Level 2 自愈与 11:00 无头补跑
+全部失效，日志里只有一行「未找到 claude CLI，无法补跑」。
+
+**重装走 npm，不要用 claude.ai 的安装脚本**：
+
+```bash
+npm install -g @anthropic-ai/claude-code
+ln -sfn /opt/homebrew/bin/claude ~/.local/bin/claude   # 软链指向 npm 的 bin，升级不会再断
+```
+
+- 实测 npm registry **831 KB/s**，claude.ai 官方二进制只有 **~90 KB/s**，差 9 倍。
+- npm 会拦下 postinstall（allow-scripts 策略），**不影响使用**，可以忽略那条 warn。
+- 装完是自包含的：188MB 的 darwin-arm64 二进制就在 node_modules 里，不会延迟下载。
+
+**排查时必须验到「无头调用」这一层，只看 `--version` 会误判**：
+
+```bash
+claude -p "回复:OK" --dangerously-skip-permissions
+```
+
+`--version` 能过、无头调用却报 `Failed to authenticate: OAuth session expired`
+是常见组合——CLI 装好了但 OAuth 会话过期，得在终端跑一次 `claude` 走 `/login`。
+
+### 另一个坑：`env -i` 调 claude 会认证失败
+
+凭证存在 keychain 里，取用需要 `USER` / `LOGNAME`。用 `env -i` 起干净环境时
+这两个被剥掉，claude 就会报 OAuth 过期——**看起来像凭证坏了，其实是环境缺变量**。
+
+launchd 会自动提供 `USER` / `LOGNAME`（已用临时 job 实测确认），所以
+**四个 health plist 不需要为此加任何东西**。但以后谁在脚本里用 `env -i` 包一层
+去调 claude，就会踩这个坑。
