@@ -41,6 +41,7 @@
 | 文件 | 作用 |
 |---|---|
 | `alert.py` | 把一条运维告警发到飞书，供各 bot 的 `health_check.sh` 调用。用法 `alert.py <bot名> <FAIL\|WARN\|INFO> <正文>`；**webhook 与 secret 成对取**——设了 `FEISHU_ALERT_WEBHOOK` 就只配 `FEISHU_ALERT_SECRET`，否则才回退到 bot 自己的 `FEISHU_WEBHOOK`/`FEISHU_SECRET`。（2026-09-03 修：原来两者各自独立回退，"设了分流地址、没设分流密钥"时会拿日报群的密钥去签监测群的请求，签名对不上导致告警静默丢失。）**任何情况下都以 0 退出**——告警发不出去不该让体检中断。 |
+| `health_check_base.sh` | 各 bot 体检脚本的公共实现，由各自 30 行左右的 `health_check.sh` 薄封装 source。封装只声明差异点：`BOT_NAME` / `MAIN_PLIST` / `NO_NEWS_PATTERN` / `NO_NEWS_MSG`，可选 `STALE_KEY` / `ZERO_KEY` / `content_check()`。**2026-09-03 抽出**——此前 5 份各 221 行、两两只差 18~27 行，约 1100 行里 1000 行是复制粘贴，已经因此漏改出过三个 bug（见文件头）。 |
 | `bot_utils.py` | 三个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（AI 相关性）/ `is_market_relevant`（美股相关性），均只给泛源用<br>**推送与监控** `html_to_lark_md`（HTML 稿件 → 飞书卡片 markdown）/ `paginate_feishu`（20KB 切分 + 页码 + 长度均衡）/ `send_feishu`（带签名直连推送）/ `update_zero_streak`（连续零产追踪）/ `resolve_proxy`（代理端口自愈）<br>**主脚本公共构件** `make_logger`（绑定路径的 write_log）/ `make_pending_saver` / `proxy_ok`（代理预检+自愈，返回生效代理）/ `emit_fetch_output`（fetch 的 stdout 一次性输出并落盘 `logs/last_context.txt`） |
 | `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑；仍失败则移交无头补跑 |
 | `headless_catchup_base.sh` | 共享无头补跑逻辑：用本机 `claude` CLI 无人值守完整重走 fetch → 写稿 → send，等价于手动 Run Now |
@@ -49,8 +50,10 @@
 ## 各 bot 如何引用本目录
 
 - Python：脚本顶部 `sys.path.insert(0, ~/Desktop/bots/shared)` 后 `from bot_utils import ...`
-- Shell：各 bot 的 `auto_repair.sh` / `claude_catchup.sh` 薄包装设好变量后
-  `source ~/Desktop/bots/shared/auto_repair_base.sh`（或 `headless_catchup_base.sh`）
+- Shell：各 bot 的 `health_check.sh` / `auto_repair.sh` / `claude_catchup.sh` 薄包装设好变量后
+  `source ~/Desktop/bots/shared/health_check_base.sh`（或 `auto_repair_base.sh` /
+  `headless_catchup_base.sh`）。**三个 shell 入口现在都是薄封装，逻辑一律写在共享层**——
+  往封装里塞逻辑就等于把复制粘贴的债重新背回来。
 
 ## 运维告警去向
 
