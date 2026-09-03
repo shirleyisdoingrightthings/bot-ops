@@ -73,7 +73,6 @@
 |---|---|---|
 | 10:00 | 主力：各 bot 依次抓取 → Claude 写稿 → 推送飞书 | Claude App 定时任务 `morning-catchup-daily-bots`（prompt 备份在 `scheduled-tasks/`） |
 | 11:00 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
-| 随时 | 人工补发 | Claude App 手动任务 `manual-resend-daily-bots` |
 
 各 bot 的主 plist（`com.shirley.*-bot`）**不再承担调度职责**，仅作为密钥与代理的
 环境变量配置源供脚本读取。

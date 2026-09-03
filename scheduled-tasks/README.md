@@ -11,7 +11,10 @@
 |---|---|---|---|
 | `morning-catchup-daily-bots/SKILL.md` | `morning-catchup-daily-bots` | 每天 10:00（cron `0 10 * * *`） | 主力写稿入口：依次跑 AI 产业日报（周日改出周回顾）、Crypto 日报、美股日报，抓取 → Claude 写稿 → 推送 |
 
-`manual-resend-daily-bots`（手动补发）与历史上的一次性任务尚未纳入备份，需要时再加。
+`manual-resend-daily-bots` 与 8 月那两个一次性核对任务已于 2026-09-03 删除：
+前者写于 07-20，描述里还在说「Telegram」「三个 bot」，与现状脱节；后两个是
+用完即弃的一次性核对。需要临时补发时，直接对当天那块跑
+`FORCE_RUN=1 bash <bot>/claude_report.sh send` 即可，不必再养一个常驻任务。
 
 ## 恢复
 
