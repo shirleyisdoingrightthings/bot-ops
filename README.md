@@ -1,13 +1,18 @@
 # bot-ops — 每日播报 Bot 的共享运行层
 
-Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈逻辑。三个 bot 仓库
-（`crypto-daily-bot`、`AI-Daily-News-Bot`、`us-stock-bot`）各自独立，但通过本目录共享"形式和运行方式"：
-改这里的代码，三个 bot 同时生效。
+五个播报 bot 共用的工具与自愈逻辑。各 bot 仓库（`crypto-daily-bot`、`AI-Daily-News-Bot`、
+`us-stock-bot`、`x-hotspot-bot`、`ai-builder-bot`）各自独立，但通过本目录共享"形式和运行方式"：
+改这里的代码，五个 bot 同时生效。
+
+> **2026-09-03 起，五套代码在飞书群里只显示为三个机器人。**
+> AI Daily News Bot、X 热点、AI Builder 三块推送到**同一个 webhook**（群里显示为
+> 「AI 产业日报」），加密与美股各自独立。三块仍是三套脚本、三份去重档案、三个
+> run.log，只是发送目标合并——任一块出问题不影响其余两块。
 
 > ⚠️ 备份教训：本目录原本不在任何 GitHub 仓库里，换电脑时 `bot_utils.py` 丢失、
 > 整套工作流跑不起来。现已单独纳入版本控制，**改动后请记得 commit + push**。
 
-> 📍 当前位置：`~/Desktop/bots/shared/`，与三个 bot 同级。各 bot 用 `Path(__file__).resolve().parent.parent / "shared"`
+> 📍 当前位置：`~/Desktop/bots/shared/`，与各 bot 同级。各 bot 用 `Path(__file__).resolve().parent.parent / "shared"`
 > 从脚本自身位置推导本目录，因此整个 `bots` 文件夹搬到任何位置都不需要改代码（launchd plist 因格式限制仍需绝对路径）。
 
 
@@ -35,23 +40,35 @@ Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈�
 
 | 文件 | 作用 |
 |---|---|
-| `alert.py` | 把一条运维告警发到飞书，供各 bot 的 `health_check.sh` 调用。用法 `alert.py <bot名> <FAIL\|WARN\|INFO> <正文>`；webhook 取 `FEISHU_ALERT_WEBHOOK`，未设则回退 `FEISHU_WEBHOOK`。**任何情况下都以 0 退出**——告警发不出去不该让体检中断。 |
+| `alert.py` | 把一条运维告警发到飞书，供各 bot 的 `health_check.sh` 调用。用法 `alert.py <bot名> <FAIL\|WARN\|INFO> <正文>`；**webhook 与 secret 成对取**——设了 `FEISHU_ALERT_WEBHOOK` 就只配 `FEISHU_ALERT_SECRET`，否则才回退到 bot 自己的 `FEISHU_WEBHOOK`/`FEISHU_SECRET`。（2026-09-03 修：原来两者各自独立回退，"设了分流地址、没设分流密钥"时会拿日报群的密钥去签监测群的请求，签名对不上导致告警静默丢失。）**任何情况下都以 0 退出**——告警发不出去不该让体检中断。 |
 | `bot_utils.py` | 三个 bot 共用的工具函数，分五组：<br>**基础** `sanitize_html` / `with_retry` / `fetch_rss` / `parse_entry_date` / `already_ran_today`<br>**取材** `fetch_article_text`（best-effort 抓正文全文，零依赖）<br>**跨天去重** `url_key` / `load_sent_urls` / `record_sent_urls` / `extract_hrefs`<br>**选题过滤** `is_ai_relevant`（AI 相关性）/ `is_market_relevant`（美股相关性），均只给泛源用<br>**推送与监控** `html_to_lark_md`（HTML 稿件 → 飞书卡片 markdown）/ `paginate_feishu`（20KB 切分 + 页码 + 长度均衡）/ `send_feishu`（带签名直连推送）/ `update_zero_streak`（连续零产追踪）/ `resolve_proxy`（代理端口自愈）<br>**主脚本公共构件** `make_logger`（绑定路径的 write_log）/ `make_pending_saver` / `proxy_ok`（代理预检+自愈，返回生效代理）/ `emit_fetch_output`（fetch 的 stdout 一次性输出并落盘 `logs/last_context.txt`） |
 | `auto_repair_base.sh` | 共享两级自愈逻辑：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断修复后重跑；仍失败则移交无头补跑 |
 | `headless_catchup_base.sh` | 共享无头补跑逻辑：用本机 `claude` CLI 无人值守完整重走 fetch → 写稿 → send，等价于手动 Run Now |
 | `scheduled-tasks/` | Claude 定时任务 prompt 的版本化副本（原件在 `~/.claude/scheduled-tasks/`，不属于任何仓库，换机即丢）。恢复步骤与同步纪律见该目录 README |
 
-## 三个 bot 如何引用本目录
+## 各 bot 如何引用本目录
 
 - Python：脚本顶部 `sys.path.insert(0, ~/Desktop/bots/shared)` 后 `from bot_utils import ...`
 - Shell：各 bot 的 `auto_repair.sh` / `claude_catchup.sh` 薄包装设好变量后
   `source ~/Desktop/bots/shared/auto_repair_base.sh`（或 `headless_catchup_base.sh`）
 
+## 运维告警去向
+
+2026-09-03 起，**所有 bot 的 WARN/FAIL 都发到单独的监测机器人**，不再混进日报群。
+在各 bot 的主 plist 里配 `FEISHU_ALERT_WEBHOOK` 即可（`health_check.sh` 只从主 plist
+读 `FEISHU_*` 开头的键）。
+
+同日还改了缺跑扫描的行为：`health_check.sh` 的 1.5 节**只写本地日志，不再推送**。
+原来它每天把整个 7 天窗口内的缺跑日期推一遍，同一批旧日期（如 08-28、08-29）会连推
+7 天才滚出窗口，读起来像"今天又出问题了"，而当天其实跑得好好的。当天缺跑不需要靠
+它发现——第 2/3 节的 MISSING 分支本来就会在补跑窗口内发一条「今天主脚本未运行」。
+**不要因为"历史缺跑没人告诉我"把 notify 加回去。**
+
 ## 每日时间线
 
 | 时间 | 环节 | 执行者 |
 |---|---|---|
-| 10:00 | 主力：三个 bot 依次抓取 → Claude 写稿 → 推送飞书 | Claude App 定时任务 `morning-catchup-daily-bots`（prompt 备份在 `scheduled-tasks/`） |
+| 10:00 | 主力：各 bot 依次抓取 → Claude 写稿 → 推送飞书 | Claude App 定时任务 `morning-catchup-daily-bots`（prompt 备份在 `scheduled-tasks/`） |
 | 11:00 | 体检：当天无 `[OK]` 则自愈 / 无头补跑 | launchd `com.shirley.*-bot-health` |
 | 随时 | 人工补发 | Claude App 手动任务 `manual-resend-daily-bots` |
 
@@ -65,7 +82,7 @@ Crypto Daily Bot、AI Daily News Bot 与 US Stock Bot 共用的工具与自愈�
 
 ## 跨天去重与源淘汰
 
-三个 bot 的时间窗（AI 24h / Crypto 3 天 / 美股 48h）都拦不住"同一条新闻连续多天入选"，
+各 bot 的时间窗（AI 24h / Crypto 3 天 / 美股 48h / X 热点 48h）都拦不住"同一条新闻连续多天入选"，
 因为脚本内的 `seen_urls` 只在单次运行内有效。现由共享层统一处理：
 
 - **去重**：`send` 成功后从稿件里抽 `<a href>` 记入各 bot 的 `logs/sent_urls.json`
