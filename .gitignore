@@ -2,3 +2,8 @@
 __pycache__/
 *.pyc
 *.log
+
+# 改动前的临时备份，不入库
+*.bak
+*.bak-*
+*.bak2-*
