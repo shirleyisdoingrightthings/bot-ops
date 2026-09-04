@@ -1,0 +1,15 @@
+# bot_utils.py 的第三方依赖——它才是真正 import 这两个库的地方
+#（fetch_rss/parse_entry_date 用 feedparser，抓取与飞书推送用 requests）。
+#
+# 五个 bot 都通过 sys.path 引用 ../shared/bot_utils.py，所以它们的
+# requirements.txt 一律写 `-r ../shared/requirements.txt` 指回这里，
+# 版本下限只在本文件维护一处。
+#
+# 此前是每个 bot 各自重复声明 shared 的传递依赖，结果既漏又漂：
+# ai-builder-bot 整个文件都没有，us stock bot 写 >=2.31.0/>=6.0.10、
+# 其余三家写 >=2.31/>=6.0。2026-09-05 收敛到这里。
+#
+# 下限取各处出现过的最严值。实测运行环境（/usr/bin/python3 3.9.6）
+# 装的是 requests 2.32.5 / feedparser 6.0.12，均满足。
+requests>=2.31.0
+feedparser>=6.0.10
