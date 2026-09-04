@@ -350,6 +350,16 @@ def extract_hrefs(html_text: str) -> list[str]:
     return [u for u in _HREF_RE.findall(html_text) if u.lower().startswith("http")]
 
 
+# 原帖链接的唯一权威定义：只认 x.com / twitter.com 的 /<user>/status/<id>。
+# 必须是完整帖子链接——x.com/home、x.com/explore 这类导航页，以及路径里恰好
+# 含 "x.com/" 的第三方 URL 都不算。x-hotspot-bot 与 ai-builder-bot 的出稿硬
+# 闸门共用它：一份没有原帖直链的播报等于二手转述，宁可不发。
+# 2026-09-05 从 x-hotspot-bot/sources.py 提上来——此前 ai-builder-bot 用的是
+# 子串匹配 `"x.com/" in u`，比这里松，会把导航页当原帖放行。
+X_POST_RE = re.compile(
+    r"https?://(?:www\.)?(?:x|twitter)\.com/([A-Za-z0-9_]{1,15})/status/(\d+)")
+
+
 # ───────────────────────────────────────────────
 # 8) AI 相关性闸门 — 只给泛科技源用
 # ───────────────────────────────────────────────
@@ -864,3 +874,74 @@ def emit_fetch_output(lines, save_to=None) -> str:
         except Exception as e:
             print(f"  ⚠️ context 落盘失败（不影响本次输出）：{e}", file=sys.stderr)
     return payload
+
+
+# ───────────────────────────────────────────────
+# 13) 单条稿件 + 原帖闸门的通用 send
+# ───────────────────────────────────────────────
+# x-hotspot-bot 与 ai-builder-bot 的 send 流程本来是两份 ~47 行的复制粘贴，
+# 结构 91% 相同，差异只有措辞。它们各自演化的结果是**闸门实现不一致**：
+# x-hotspot 用 X_POST_RE，builder 用子串 `"x.com/" in u`，后者会把 x.com/home
+# 这类导航页当原帖放行。2026-09-05 合并到这里，闸门统一走 X_POST_RE。
+#
+# 只服务「一条消息 + 必须带原帖直链」这一种形态。crypto/美股/AI 日报是多条消息、
+# 没有原帖闸门，不要硬套过来。
+
+def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_urls,
+                         webhook, secret, write_log, save_pending,
+                         link_label: str = "原帖") -> int:
+    """读取 Claude 写好的单份稿件 → 原帖闸门 → 推飞书 → 归档去重 → 写日志。
+
+    link_label 只影响日志与 stderr 的措辞（x-hotspot 说「原帖」、builder 说「原推」），
+    不参与任何判定。返回值即进程退出码：0 成功或当天已跑过，1 失败。
+    """
+    t0 = time.time()
+
+    if already_ran_today(log_file):
+        print("今天已成功运行过，跳过发送。如需强制请设置 FORCE_RUN=1。", file=sys.stderr)
+        return 0
+
+    draft_path = Path(draft_path)
+    if not draft_path.exists():
+        write_log("FAIL", f"稿子文件不存在：{draft_path}")
+        return 1
+    report = draft_path.read_text(encoding="utf-8").strip()
+    if not report:
+        write_log("FAIL", f"稿子文件为空：{draft_path}")
+        return 1
+
+    report = sanitize_html(report)
+
+    # 出稿硬约束：一份没有原帖直链的播报等于二手转述，宁可不发也不发一份只有
+    # 转述的。这条闸门是这两个 bot 存在的理由，别为了"至少发出去"而放宽。
+    hrefs = extract_hrefs(report)
+    x_links = [u for u in hrefs if X_POST_RE.search(u)]
+    if not x_links:
+        write_log("FAIL",
+                  f"稿件里没有任何 x.com {link_label}链接，拒绝发送（见 prompt.md 的硬性要求）")
+        return 1
+
+    save_pending([report])
+    print("📨 推送到飞书...", file=sys.stderr)
+    sent = send_feishu(report, webhook, secret)
+    print(f"  ✓ 推送成功（{sent} 条）", file=sys.stderr)
+    Path(cache_file).unlink(missing_ok=True)
+
+    # 只把 x.com 原帖记入去重档案：Techmeme 之类的媒体链接同一话题连着几天
+    # 出现是正常的，拿它去重会误伤。
+    total = record_sent_urls(sent_urls, x_links)
+    print(f"  ✓ 已归档 {len(x_links)} 条{link_label}链接用于跨天去重（档案共 {total} 条）",
+          file=sys.stderr)
+
+    try:
+        meta = json.loads(Path(fetch_meta).read_text(encoding="utf-8"))
+    except Exception:
+        meta = {"log_summary": "", "metrics": {}}
+    duration = round(time.time() - t0, 1)
+    write_log("OK",
+              f"Claude写稿 → {meta.get('log_summary', '')} → 飞书推送成功"
+              f"（{sent} 条 / {len(report)}字 / {len(x_links)} 条{link_label}）",
+              metrics={**meta.get("metrics", {}), "ai_calls": 0,
+                       "duration_s": duration, "report_chars": len(report),
+                       "x_links": len(x_links), "source": "claude"})
+    return 0
