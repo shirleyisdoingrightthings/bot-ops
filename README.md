@@ -18,10 +18,9 @@
 | 文件 | 作用 |
 |---|---|
 | `bot_utils.py` | 共用工具函数，分五组：基础（`sanitize_html`、`fetch_rss`、`already_ran_today` 等）、取材（`fetch_article_text`）、跨天去重（`url_key` / `load_sent_urls` / `record_sent_urls`）、选题过滤（`is_ai_relevant` / `is_market_relevant`，只给泛源用）、推送与监控（`send_feishu`、`paginate_feishu`、`update_zero_streak`、`proxy_ok` 等）。逐个函数的说明见文件头 |
-| `health_check_base.sh` | 体检的公共实现，各 bot 的 `health_check.sh` 是 30 行左右的薄封装。封装只声明差异点：`BOT_NAME` / `MAIN_PLIST` / `NO_NEWS_PATTERN` / `NO_NEWS_MSG`，可选 `STALE_KEY` / `ZERO_KEY` / `content_check()` |
+| `health_check_base.sh` | 体检的公共实现，各 bot 的 `health_check.sh` 是 30 行左右的薄封装。封装只声明差异点：`BOT_NAME` / `NO_NEWS_PATTERN` / `NO_NEWS_MSG`，可选 `STALE_KEY` / `ZERO_KEY` / `content_check()` |
 | `auto_repair_base.sh` | 两级自愈：Level 1 瞬时错误等 30s 重跑；Level 2 调 Claude CLI 诊断后重跑；仍失败移交无头补跑 |
 | `headless_catchup_base.sh` | 无头补跑：用本机 `claude` CLI 完整重走 fetch → 写稿 → send，等价于手动 Run Now |
-| `alert.py` | 把一条运维告警发到飞书。用法 `alert.py <bot名> <FAIL\|WARN\|INFO> <正文>`，任何情况下都以 0 退出 |
 | `scheduled-tasks/` | Claude 定时任务 prompt 的版本化副本（原件在 `~/.claude/scheduled-tasks/`，不属于任何仓库，换机即丢） |
 
 ## 各 bot 如何引用
@@ -42,8 +41,7 @@
 
 ## 运维告警
 
-WARN/FAIL 都发到单独的监测机器人，不进日报群——在各 bot 主 plist 里配
-`FEISHU_ALERT_WEBHOOK` 即可（`health_check.sh` 只从主 plist 读 `FEISHU_*` 开头的键）。
+体检告警只弹 Mac 桌面通知，不推飞书（2026-10-07 去掉了监测机器人）。
 
 缺跑扫描只写本地日志、不推送。当天缺跑由体检的 MISSING 分支负责通知，
 历史缺跑不要再加回推送（原因见 `health_check_base.sh` 的 1.5 节注释）。

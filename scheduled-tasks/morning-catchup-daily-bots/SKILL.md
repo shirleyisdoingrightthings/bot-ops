@@ -11,8 +11,6 @@ description: 每早 10:00 由 Claude 写稿并推送加密日报与美股日报�
   - 加密日报（`crypto daily bot`）
   - 美股日报（`us stock bot`）
 
-⚠️ **告警不进日报群**：各 bot 的 health_check 把 WARN/FAIL 发到单独的监测机器人（plist 里的 `FEISHU_ALERT_WEBHOOK`）。本任务不负责告警。
-
 **时间线**：本任务 10:00 触发（主力）→ 11:00 各 bot 的 launchd health_check 体检（`com.shirley.crypto-daily-bot-health` / `com.shirley.us-stock-bot-health`）；`[FAIL]` 派 auto_repair 自愈，当天无记录则派 `claude_catchup.sh` 无头补跑。注：主 plist（`com.shirley.*`，不带 -health）已不再承担调度，仅作为密钥/代理的环境变量配置源。
 
 工作根目录是 `/Users/jialiwu/Desktop/bots`，共享层在 `/Users/jialiwu/Desktop/bots/shared/`。

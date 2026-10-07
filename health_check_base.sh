@@ -18,7 +18,6 @@
 # ── 封装需要提供的变量 ───────────────────────────────────────────────
 # 必填：
 #   BOT_NAME          告警标题里的 bot 名，例：AI Daily News Bot
-#   MAIN_PLIST        主 plist 绝对路径（只从中取 FEISHU_* 键）
 #   NO_NEWS_PATTERN   终态 WARN 的 grep 模式，必须与脚本 write_log 的实际措辞一致
 #   NO_NEWS_MSG       终态 WARN 的通知正文
 # 选填：
@@ -32,7 +31,6 @@ set -uo pipefail
 
 : "${DIR:?封装必须先设 DIR}"
 : "${BOT_NAME:?封装必须先设 BOT_NAME}"
-: "${MAIN_PLIST:?封装必须先设 MAIN_PLIST}"
 : "${NO_NEWS_PATTERN:?封装必须先设 NO_NEWS_PATTERN（须与脚本 write_log 的实际措辞一致）}"
 : "${NO_NEWS_MSG:?封装必须先设 NO_NEWS_MSG}"
 STALE_KEY="${STALE_KEY:-}"
@@ -44,7 +42,6 @@ CHANGELOG="$DIR/changelog.md"
 OK_COUNT_FILE="$DIR/logs/.ok_streak"
 TODAY=$(date '+%Y-%m-%d')
 HOUR=$(date '+%H'); HOUR=${HOUR#0}; HOUR=${HOUR:-0}
-ALERT_PY="$DIR/../shared/alert.py"
 
 # 无头补跑的时间窗。RunAtLoad 打开后，本脚本会在每次开机/登录时也跑一遍，
 # 没有这个窗口就会出现两种误触发：
@@ -56,34 +53,11 @@ CATCHUP_UNTIL=${CATCHUP_UNTIL:-20}
 # 缺跑回看天数：只用来"告诉你哪几天彻底没跑"，不触发任何补救动作，也不推送告警
 MISSED_LOOKBACK=${MISSED_LOOKBACK:-7}
 
-# ── 0. 告警通道：桌面通知 + 飞书 ─────────────────────────────────────
-# 桌面通知只在人坐在电脑前时有效。2026-08-30 查出三个 health job 因 EX_CONFIG
-# 连续 11 天没跑成，而唯一的告警渠道恰好也是最看不见的那个——故障本身把报警器
-# 一起带走了。飞书是已经在手的送达渠道，这里让每条告警同时走两边。
-#
-# 只从主 plist 取 FEISHU_* ——那里还放着 PATH 等键，整份 export 会覆盖体检
-# 自己的 PATH，进而影响 claude_catchup 找 claude 可执行文件。
-# 运维消息分流到监测群靠主 plist 里的 FEISHU_ALERT_WEBHOOK（见 alert.py）。
-if [ -f "$MAIN_PLIST" ]; then
-    while IFS= read -r kv; do export "$kv"; done < <(
-        /usr/libexec/PlistBuddy -c "Print :EnvironmentVariables" "$MAIN_PLIST" 2>/dev/null \
-        | sed -n 's/^[[:space:]]*\(FEISHU[A-Z_]*\) = \(.*\)$/\1=\2/p')
-fi
-
+# ── 0. 告警：只写日志 ────────────────────────────────────────────────
+# 2026-10-07 起飞书推送和桌面通知都已去掉，告警只落到 launchd 日志
+# （~/Library/Logs/bots/*-health.log）。
 # notify <FAIL|WARN|INFO> <正文>
-notify() {
-    local level="$1" msg="$2" icon
-    case "$level" in
-        FAIL) icon="🔴" ;;
-        WARN) icon="⚠️" ;;
-        *)    icon="ℹ️" ;;
-    esac
-    osascript -e "display notification \"$msg\" with title \"$icon $BOT_NAME\"" 2>/dev/null
-    # 告警发不出去是小事，让体检因此中断是大事，故整条容错
-    [ -f "$ALERT_PY" ] && /usr/bin/python3 "$ALERT_PY" "$BOT_NAME" "$level" "$msg" 2>&1 \
-        | grep -v NotOpenSSLWarning | grep -v "warnings.warn" || true
-    return 0
-}
+notify() { echo "[health_check] $1: $2"; }
 
 # 从今天最后一条 jsonl 记录里取一个字段，取不到返回默认值。供 content_check 用。
 # 用法：jsonl_field <键名> [默认值]

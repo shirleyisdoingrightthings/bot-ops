@@ -25,7 +25,7 @@ RUN_LOG="$LOG_DIR/run.log"
 TODAY="$(date '+%Y-%m-%d')"
 
 log()    { echo "$(date '+%Y-%m-%d %H:%M:%S')  $*" | tee -a "$CATCHUP_LOG"; }
-notify() { osascript -e "display notification \"$1\" with title \"🤖 ${BOT_NAME}\"" 2>/dev/null; }
+notify() { log "$1"; }
 ok_today() { grep -q "$TODAY.*\[OK\]" "$RUN_LOG" 2>/dev/null; }
 
 # ── 今天已成功 → 不补跑（防重复推送）─────────────────────────────

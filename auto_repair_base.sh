@@ -52,7 +52,7 @@ TODAY="$(date '+%Y-%m-%d')"
 SHORT="$(echo "$ERROR" | cut -c1-120)"
 
 log()    { echo "$(date '+%Y-%m-%d %H:%M:%S')  $*" | tee -a "$REPAIR_LOG"; }
-notify() { osascript -e "display notification \"$1\" with title \"🛠️ ${BOT_NAME}\"" 2>/dev/null; }
+notify() { log "$1"; }
 
 # 把 changelog 中“含本次错误摘要”的 [ ]/[/] 条目改成指定标记（/=修复中, x=待验证）
 mark_changelog() {

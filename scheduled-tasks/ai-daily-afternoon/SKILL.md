@@ -14,8 +14,6 @@ description: 每天 15:00 由 Claude 写稿并推送 AI 日报三块（产业日
 
 三块仍是三套独立的脚本、独立的去重档案、独立的 run.log，只是发送目标合并成了同一个 webhook。所以下面按块处理，任一块出问题不影响其余两块。**必须按 A → B → C 的顺序做**：先写完产业日报和 X 热点，写 AI Builder 时才能主动避开重复。
 
-⚠️ **告警不进日报群**：各 bot 的 health_check 把 WARN/FAIL 发到单独的监测机器人（plist 里的 `FEISHU_ALERT_WEBHOOK`）。本任务不负责告警。
-
 **时间线（2026-09-04 改）**：本任务 15:00 触发（主力）→ 16:00 由 `com.shirley.ai-chain-health` 这一个 launchd job 按固定顺序串行体检三块（产业日报 → X 热点 → AI Builder，每块 25 分钟超时），检测到当天无运行记录就调用对应 bot 的 `claude_catchup.sh` 做无头补跑。改到下午的直接原因是 AI Builder 的上游 feed 在北京时间 14:17 才生成。
 
 工作根目录是 `/Users/jialiwu/Desktop/bots`，共享层在 `/Users/jialiwu/Desktop/bots/shared/`。
