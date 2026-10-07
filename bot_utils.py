@@ -28,7 +28,7 @@ bot_utils.py — 三个 Bot（AI Daily News / Crypto Daily / US Stock）共用�
   推送与监控（飞书自定义机器人 webhook）
   - html_to_lark_md(text)          HTML 稿件 → 飞书卡片 markdown 行列表
   - paginate_feishu(lines)         按 20KB 请求体上限切分 + (n/N) 页码
-  - send_feishu(text, ...)         整套推送：转换 → 分页 → 带签名 POST（直连不走代理）
+  - send_feishu(text, ...)         整套推送：转换 → 分页 → POST（直连不走代理）
   - update_zero_streak(...)        RSS 源连续零产追踪，达阈值返回建议淘汰的源
   - resolve_proxy(configured)      代理端口自愈，返回 (可用代理, 是否切换)
   主脚本公共构件（三个 bot 曾各抄一份）
@@ -46,9 +46,6 @@ import sys
 import html
 import json
 import time
-import hmac
-import base64
-import hashlib
 import functools
 from datetime import datetime, timezone
 from pathlib import Path
@@ -421,11 +418,10 @@ def is_ai_relevant(title: str, summary: str = "") -> bool:
 # requests 的 json= 参数默认 ensure_ascii=True，一个汉字会膨胀成 \uXXXX 六个 ASCII
 # 字节，同一份稿子要多切一倍的消息。
 FEISHU_BODY_LIMIT = 20 * 1024
-# 给卡片外壳、timestamp+sign、页码行和 JSON 转义留的余量
+# 给卡片外壳、页码行和 JSON 转义留的余量
 _FEISHU_ENVELOPE_BUDGET = 2048
 
 FEISHU_WEBHOOK_ENV = "FEISHU_WEBHOOK"
-FEISHU_SECRET_ENV  = "FEISHU_SECRET"
 # 飞书限频 5 次/秒；页与页之间歇一下，顺便躲开整点前后突发的 11232 限流
 _FEISHU_PAGE_GAP_S = 0.5
 
@@ -494,20 +490,15 @@ def html_to_lark_md(text: str) -> list:
     return lines
 
 
-def _card_payload(md: str, secret=None) -> dict:
-    payload = {"msg_type": "interactive",
-               "card": {"schema": "2.0",
-                        "config": {"update_multi": True},
-                        "body": {"elements": [{"tag": "markdown", "content": md}]}}}
-    if secret:
-        ts = str(int(time.time()))
-        payload["timestamp"] = ts
-        payload["sign"] = _feishu_sign(ts, secret)
-    return payload
+def _card_payload(md: str) -> dict:
+    return {"msg_type": "interactive",
+            "card": {"schema": "2.0",
+                     "config": {"update_multi": True},
+                     "body": {"elements": [{"tag": "markdown", "content": md}]}}}
 
 
 def _payload_bytes(md: str) -> int:
-    """整条请求体的实际字节数（签名字段按最长情形预留在 ENVELOPE 里）。"""
+    """整条请求体的实际字节数。"""
     return len(json.dumps(_card_payload(md), ensure_ascii=False).encode("utf-8"))
 
 
@@ -578,20 +569,11 @@ _FEISHU_SESSION.trust_env = False
 _FEISHU_SESSION.proxies = {}
 
 
-def _feishu_sign(timestamp: str, secret: str) -> str:
-    """签名 = HMAC-SHA256(key = "timestamp\n密钥", msg = 空) 再 base64。
-
-    注意被签的是空消息体、密钥反而当 key 用，这是飞书的规定，不是笔误。"""
-    string_to_sign = f"{timestamp}\n{secret}"
-    digest = hmac.new(string_to_sign.encode("utf-8"), digestmod=hashlib.sha256).digest()
-    return base64.b64encode(digest).decode("utf-8")
-
-
 @with_retry(max_retries=3, base_delay=5, exceptions=(requests.RequestException,))
-def _feishu_send_card(webhook: str, secret, md: str) -> None:
+def _feishu_send_card(webhook: str, md: str) -> None:
     # 手动序列化：ensure_ascii=False 让汉字按 UTF-8 占 3 字节而不是 \uXXXX 的 6 字节，
     # 与分页的字节预算保持同一口径
-    body = json.dumps(_card_payload(md, secret), ensure_ascii=False).encode("utf-8")
+    body = json.dumps(_card_payload(md), ensure_ascii=False).encode("utf-8")
     resp = _FEISHU_SESSION.post(
         webhook, data=body,
         headers={"Content-Type": "application/json; charset=utf-8"},
@@ -610,10 +592,10 @@ def _feishu_send_card(webhook: str, secret, md: str) -> None:
         raise requests.RequestException(f"飞书返回错误 code={code}：{msg}")
 
 
-def send_feishu(text: str, webhook: str = "", secret=None) -> int:
+def send_feishu(text: str, webhook: str = "") -> int:
     """把一份（已 sanitize_html 的）稿件推送到飞书自定义机器人，返回实际发出的条数。
 
-    webhook/secret 缺省从环境变量 FEISHU_WEBHOOK / FEISHU_SECRET 读取。
+    webhook 缺省从环境变量 FEISHU_WEBHOOK 读取。
     没配 webhook 直接抛错、绝不静默吞掉——静默成功会让 health_check 也看不出问题。"""
     # 空稿直接返回：三个 bot 的 run_send 都已挡过一道，这里是兜底——
     # 宁可不发，也不要推一条空白消息出去。
@@ -625,13 +607,12 @@ def send_feishu(text: str, webhook: str = "", secret=None) -> int:
         raise ValueError(
             f"未配置飞书 webhook（环境变量 {FEISHU_WEBHOOK_ENV}）——"
             "请在飞书群「设置 → 群机器人 → 添加机器人 → 自定义机器人」里取得地址")
-    sec = secret if secret is not None else os.getenv(FEISHU_SECRET_ENV, "")
 
     pages = paginate_feishu(html_to_lark_md(text))
     for i, md in enumerate(pages):
         if i:
             time.sleep(_FEISHU_PAGE_GAP_S)
-        _feishu_send_card(hook, sec or None, md)
+        _feishu_send_card(hook, md)
     return len(pages)
 
 
@@ -888,7 +869,7 @@ def emit_fetch_output(lines, save_to=None) -> str:
 # 没有原帖闸门，不要硬套过来。
 
 def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_urls,
-                         webhook, secret, write_log, save_pending,
+                         webhook, write_log, save_pending,
                          link_label: str = "原帖") -> int:
     """读取 Claude 写好的单份稿件 → 原帖闸门 → 推飞书 → 归档去重 → 写日志。
 
@@ -923,7 +904,7 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
 
     save_pending([report])
     print("📨 推送到飞书...", file=sys.stderr)
-    sent = send_feishu(report, webhook, secret)
+    sent = send_feishu(report, webhook)
     print(f"  ✓ 推送成功（{sent} 条）", file=sys.stderr)
     Path(cache_file).unlink(missing_ok=True)
 
