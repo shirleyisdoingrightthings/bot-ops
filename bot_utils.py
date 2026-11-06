@@ -656,15 +656,15 @@ def update_zero_streak(path, zero_sources, all_sources, threshold: int = 3) -> d
 # 11) resolve_proxy — 代理端口自愈
 # ───────────────────────────────────────────────
 # 背景：代理端口写死在 plist 里，用户换代理软件（Shadowrocket / Clash 等）
-# 端口就变。历史上发生过两次（7897 → 7892 → 1082），最近一次让两个 bot
+# 端口就变。历史上发生过三次（7897 → 7892 → 1082 → 12450），最近一次让两个 bot
 # 静默停摆 3 天——脚本只知道"配置的端口不通"，不会尝试任何替代。
 #
 # 策略：先试配置端口；不通则依次探测候选端口，命中即改用并告警。
 # 探测用 gstatic 的 204 端点（轻量、无内容、境外可达性可靠）。
 
-# 探测顺序即优先级：先 1082（当前 Shadowrocket），不通再试 7897。
+# 探测顺序即优先级：先 12450（当前代理），不通再试 1082、7897。
 # 每多一个候选最多多花一个 timeout（默认 5 秒），且只在配置端口已经不通时才走到。
-PROXY_CANDIDATES = ("1082", "7897")
+PROXY_CANDIDATES = ("12450", "1082", "7897")
 _PROBE_URL = "https://www.gstatic.com/generate_204"
 
 
@@ -686,7 +686,7 @@ def resolve_proxy(configured: str | None, candidates=PROXY_CANDIDATES,
     - configured 不通但某候选端口可用 → (该候选, True)
     - 全都不通 → (None, False)，调用方按代理不可用处理
 
-    候选端口探测失败每个只花 timeout 秒上限，默认两个候选最多 10 秒。"""
+    候选端口探测失败每个只花 timeout 秒上限，默认三个候选最多 15 秒。"""
     if not configured:
         return None, False
 
