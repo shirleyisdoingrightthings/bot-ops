@@ -50,11 +50,12 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
    `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
-### 步骤 2B — 写本周回顾（`WEEKLY_OK` 时）
-1. Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt_weekly.md`（**不要用 prompt.md**）。
+### 步骤 2B — 写本周回顾（`WEEKLY_OK` 时，自动调用 `Pro` 模型写稿）
+⚠️ **模型动态路由（方案 A）：** 平时周一至周六的日常任务由主 Agent（`Flash` 模型）直接完成；唯独周日触发 `=== WEEKLY_OK ===` 时，由于需要跨 6 天、约 1.5 万字存档做线索合并与重新评分，**必须调用 `invoke_subagent`（设置 `TypeName: "self"`, `Model: "pro"`）指派 `Pro` 子模型专门撰写《AI 产业周回顾》**，写完直接落盘到 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`：
+1. 让 `Pro` 子模型 Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt_weekly.md`（**不要用 prompt.md**）及 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/last_context.txt`。
 2. 严格按其全部规则，基于存档 + 新增素材写出完整《AI 产业周回顾》。核心是跨天合并同一线索、按一周尺度重新评分（只留 >= 4 分）、按主题分组，**不是把几天日报拼起来**。
 3. 硬约束：只用 `<b>` 和 `<a href>` 标签；**链接一律从存档里原样复制，绝不凭记忆生成 URL**；只写存档与新增素材里出现过的事实，不补充你自己知道的背景；日期区间按 prompt_weekly.md 的规则从 context 的覆盖区间推出。
-4. Write 纯正文到同一个文件：
+4. 使用 `write_file`（`Overwrite: true`）将纯正文写入同一个文件：
    `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
 ### 步骤 3 — 发送
@@ -114,9 +115,9 @@ context 里有两个区块：`=== AINEWS_BEGIN/END ===` 是主素材（Twitter R
 1. Read `/Users/jialiwu/.gemini/bots/x-hotspot-bot/prompt.md`。
 2. 严格按其全部规则，基于步骤 1 的素材写出完整《X 热点播报》。
 3. **硬约束（前两条违反会被 send 直接拒发，或让稿子失去意义）：**
-   - **每条话题至少带一条 `x.com/<user>/status/<id>` 原帖直链**，且**必须从素材的「原帖排行」里原样复制，绝不凭记忆生成 status id**。send 会检查，全篇一条都没有直接 `[FAIL]`。
-   - **不许把「被引 N 次」写成「点赞数」或「最高赞」**。那是该帖在当天 AINews 复盘里被引用的次数，是讨论中心度的代理指标，不是互动量。要提就照实说「当天复盘里被引用 N 次」。
-   - **分歧必须保留**：素材里有 `Supportive / Neutral / Critical` 三档，只写叫好的一侧等于骗人。重要话题都要给出「有人说 A、也有人说 B」。
+   - **每条话题只选被引用次数最多的那 1 条 `x.com/<user>/status/<id>` 原帖直链贴出**（格式：`原帖：<a href="{x.com 直链}">@{handle}</a>（当天复盘被引用 {N} 次）`），**不要堆砌多条原帖链接**，且必须从素材的「原帖排行」里原样复制，绝不凭记忆生成 status id。send 会检查，全篇一条都没有直接 `[FAIL]`。
+   - **不许把「被引 N 次」写成「点赞数」或「最高赞」**。那是该帖在当天 AINews 复盘里被引用的次数，是讨论中心度的代理指标，不是互动量。要提就照实说「当天复盘被引用 N 次」。
+   - **分歧必须保留**：素材里有 `Supportive / Neutral / Critical` 三档，只写叫好的一侧等于骗人。重要话题都要给出「有人说 A、也有人说 B」（正文中点出代表人物的 `@handle` 即可，末尾只挂被引最高的那 1 条原帖直链）。
    - 只用 `<b>` 和 `<a href>` 标签；英文人名、账号 handle、模型名不翻译。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
    `/Users/jialiwu/.gemini/bots/x-hotspot-bot/logs/report_draft.txt`
