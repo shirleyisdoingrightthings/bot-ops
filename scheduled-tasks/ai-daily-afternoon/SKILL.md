@@ -18,7 +18,9 @@ description: 每天 15:00 由 Claude 写稿并推送 AI 日报三块（产业日
 
 工作根目录是 `/Users/jialiwu/.gemini/bots`，共享层在 `/Users/jialiwu/.gemini/bots/shared/`。
 
-⚠️ **fetch 的完整输出会落盘到各 bot 的 `logs/last_context.txt`**（marker + context 原样保存）。读 stdout 时若不慎截断或输出过大被省略，**直接读这个文件**，不要重跑 fetch——重跑会再打一轮外部 API，且零产计数会被重复累加。
+⚠️ **两条工具执行铁律（防截断 & 防 `$` 吞字）：**
+1. **防截断**：执行 `fetch` 后，完整输出已自动落盘到各 bot 的 `logs/last_context.txt`（marker + context 原样保存）。若终端 stdout 截断或输出过大被省略，**直接使用 `read_file` 工具读取 `logs/last_context.txt`**，严禁重跑 `fetch`（重跑会再打一轮外部 API，且零产计数会被重复累加）。
+2. **防 `$` 变量吞字**：写稿落盘时，**必须使用 `write_file` 工具（设置 `Overwrite: true`）** 写入各 bot 的 `logs/report_draft.txt`，**严禁使用 `bash` 的 `cat <<EOF` 或 `echo` 写文件**（否则正文中的 `$100M` 等美元数字会被 shell 当作变量展开吞掉）。
 
 ## 第一部分之 A：AI 产业日报（Claude 写 1 稿）
 
