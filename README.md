@@ -7,7 +7,7 @@
 （合称「AI 日报」），加密与美股各自独立。三块仍是三套脚本、三份去重档案、三个 run.log，
 只是发送目标合并，任一块出问题不影响其余两块。
 
-位置在 `~/Desktop/bots/shared/`，与各 bot 同级。各 bot 从脚本自身位置推导本目录，
+位置在 `~/.gemini/bots/shared/`，与各 bot 同级。各 bot 从脚本自身位置推导本目录，
 所以整个 `bots` 文件夹可以随便搬（launchd plist 因格式限制仍需绝对路径）。
 
 > 本目录原本不在任何 GitHub 仓库里，换电脑时 `bot_utils.py` 丢了、整套工作流跑不起来。
@@ -25,7 +25,7 @@
 
 ## 各 bot 如何引用
 
-- Python：`sys.path.insert(0, ~/Desktop/bots/shared)` 后 `from bot_utils import ...`
+- Python：`sys.path.insert(0, ~/.gemini/bots/shared)` 后 `from bot_utils import ...`
 - Shell：`health_check.sh` / `auto_repair.sh` / `claude_catchup.sh` 三个入口都是薄封装，
   设好变量后 source 对应的 `*_base.sh`。逻辑一律写在共享层——往封装里塞逻辑，
   就是把复制粘贴的债重新背回来。

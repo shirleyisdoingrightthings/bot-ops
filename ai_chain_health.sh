@@ -17,7 +17,7 @@
 
 set -u
 
-BOTS_DIR="/Users/jialiwu/Desktop/bots"
+BOTS_DIR="/Users/jialiwu/.gemini/bots"
 
 # ⚠️ 顺序即语义，不要调换。
 CHAIN=(

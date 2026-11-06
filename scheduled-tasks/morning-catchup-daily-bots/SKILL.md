@@ -13,7 +13,7 @@ description: 每早 10:00 由 Claude 写稿并推送加密日报与美股日报�
 
 **时间线**：本任务 10:00 触发（主力）→ 11:00 各 bot 的 launchd health_check 体检（`com.shirley.crypto-daily-bot-health` / `com.shirley.us-stock-bot-health`）；`[FAIL]` 派 auto_repair 自愈，当天无记录则派 `claude_catchup.sh` 无头补跑。注：主 plist（`com.shirley.*`，不带 -health）已不再承担调度，仅作为密钥/代理的环境变量配置源。
 
-工作根目录是 `/Users/jialiwu/Desktop/bots`，共享层在 `/Users/jialiwu/Desktop/bots/shared/`。
+工作根目录是 `/Users/jialiwu/.gemini/bots`，共享层在 `/Users/jialiwu/.gemini/bots/shared/`。
 
 ⚠️ **fetch 的完整输出会落盘到各 bot 的 `logs/last_context.txt`**（marker + context 原样保存）。读 stdout 时若不慎截断或输出过大被省略，**直接读这个文件**，不要重跑 fetch——重跑会再打一轮外部 API，且零产计数会被重复累加。
 
@@ -21,7 +21,7 @@ description: 每早 10:00 由 Claude 写稿并推送加密日报与美股日报�
 
 ### 步骤 1 — 抓取
 ```
-bash "/Users/jialiwu/Desktop/bots/crypto daily bot/claude_report.sh" fetch
+bash "/Users/jialiwu/.gemini/bots/crypto daily bot/claude_report.sh" fetch
 ```
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入汇报。
@@ -41,26 +41,26 @@ bash "/Users/jialiwu/Desktop/bots/crypto daily bot/claude_report.sh" fetch
 含新闻时写两稿，只出行情时**只写消息①**：
 
 消息①（市场晨报）：
-1. Read `/Users/jialiwu/Desktop/bots/crypto daily bot/prompt_analysis.md`。
+1. Read `/Users/jialiwu/.gemini/bots/crypto daily bot/prompt_analysis.md`。
 2. 严格按其规则，结合 context 里的行情数据 + 新闻，写出《每日加密市场晨报》。
-3. Write 到 `/Users/jialiwu/Desktop/bots/crypto daily bot/logs/report_analysis.txt`。
+3. Write 到 `/Users/jialiwu/.gemini/bots/crypto daily bot/logs/report_analysis.txt`。
 
 消息②（新闻播报）——**仅当 stdout 出现 `=== NEWS_INCLUDED ===` 时才写**：
-4. Read `/Users/jialiwu/Desktop/bots/crypto daily bot/prompt_news.md`。
+4. Read `/Users/jialiwu/.gemini/bots/crypto daily bot/prompt_news.md`。
 5. 严格按其规则，基于 context 里的新闻条目写出《加密市场新闻播报》，日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」按 prompt_news.md 的速览规则写：固定 5 条、行首带星级、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。
-6. Write 到 `/Users/jialiwu/Desktop/bots/crypto daily bot/logs/report_news.txt`。
+6. Write 到 `/Users/jialiwu/.gemini/bots/crypto daily bot/logs/report_news.txt`。
 
 两稿硬约束：消息①只用 `<b>` 加粗，不用 markdown `**`；消息②只用 `<b>` 和 `<a href>`；英文原标题不翻译。
 
 ### 步骤 3 — 发送
 ```
-bash "/Users/jialiwu/Desktop/bots/crypto daily bot/claude_report.sh" send
+bash "/Users/jialiwu/.gemini/bots/crypto daily bot/claude_report.sh" send
 ```
 它会按本次是否含新闻决定发一条还是两条（含部分发送保护），超长自动分块加页码。
 非新闻日只发消息①，脚本内有旧稿新鲜度校验，不会误发几天前的新闻。
 
 ### 步骤 4 — 核对
-`tail -1 "/Users/jialiwu/Desktop/bots/crypto daily bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
+`tail -1 "/Users/jialiwu/.gemini/bots/crypto daily bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## 第三部分：美股日报（Claude 写 2 稿）
@@ -69,7 +69,7 @@ bash "/Users/jialiwu/Desktop/bots/crypto daily bot/claude_report.sh" send
 
 ### 步骤 1 — 抓取
 ```
-bash "/Users/jialiwu/Desktop/bots/us stock bot/claude_report.sh" fetch
+bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 ```
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入汇报。
@@ -84,26 +84,26 @@ bash "/Users/jialiwu/Desktop/bots/us stock bot/claude_report.sh" fetch
 
 ### 步骤 2 — 写两稿
 消息①（收盘仪表盘）：
-1. Read `/Users/jialiwu/Desktop/bots/us stock bot/prompt_market.md`。
+1. Read `/Users/jialiwu/.gemini/bots/us stock bot/prompt_market.md`。
 2. 严格按其规则，结合 context 里的行情数据 + 新闻，写出《美股收盘》。
-3. Write 到 `/Users/jialiwu/Desktop/bots/us stock bot/logs/report_market.txt`。
+3. Write 到 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_market.txt`。
 
 消息②（要闻播报）：
-4. Read `/Users/jialiwu/Desktop/bots/us stock bot/prompt_news.md`。
+4. Read `/Users/jialiwu/.gemini/bots/us stock bot/prompt_news.md`。
 5. 严格按其规则写出《美股要闻》。开头的「⚡ 30秒速览」按速览规则写：固定 5 条、行首带星级、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。
-6. Write 到 `/Users/jialiwu/Desktop/bots/us stock bot/logs/report_news.txt`。
+6. Write 到 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_news.txt`。
 
 两稿硬约束：日期一律用 context 里的【收盘交易日】，不要用今天的日期；消息①只用 `<b>` 加粗，不用 markdown `**`；消息②只用 `<b>` 和 `<a href>`；英文原标题不翻译。
 注意与 Crypto 日报的分工：本 bot 写股权角度（财报、股价、估值、并购），加密资产角度（买卖了多少 BTC）归 Crypto 日报，不要重复。
 
 ### 步骤 3 — 发送
 ```
-bash "/Users/jialiwu/Desktop/bots/us stock bot/claude_report.sh" send
+bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" send
 ```
 它会依次发送两稿（含部分发送保护），超长自动分块加页码。
 
 ### 步骤 4 — 核对
-`tail -1 "/Users/jialiwu/Desktop/bots/us stock bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
+`tail -1 "/Users/jialiwu/.gemini/bots/us stock bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
 
 ━━━━━━━━━━━━━━━
 ## 汇报格式

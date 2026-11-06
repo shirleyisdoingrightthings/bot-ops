@@ -24,12 +24,12 @@
 
 ## 恢复
 
-在一台新机器上（已装好 Claude、已放好 `~/Desktop/bots/`）：
+在一台新机器上（已装好 Claude、已放好 `~/.gemini/bots/`）：
 
 ```bash
 for t in morning-catchup-daily-bots ai-daily-afternoon; do
   mkdir -p ~/.claude/scheduled-tasks/$t
-  cp ~/Desktop/bots/shared/scheduled-tasks/$t/SKILL.md ~/.claude/scheduled-tasks/$t/
+  cp ~/.gemini/bots/shared/scheduled-tasks/$t/SKILL.md ~/.claude/scheduled-tasks/$t/
 done
 ```
 
@@ -56,7 +56,7 @@ bypassPermissions` 尤其关键**——缺了它，无人值守的那次运行�
 
 ```bash
 for t in morning-catchup-daily-bots ai-daily-afternoon; do
-  cp ~/.claude/scheduled-tasks/$t/SKILL.md ~/Desktop/bots/shared/scheduled-tasks/$t/
+  cp ~/.claude/scheduled-tasks/$t/SKILL.md ~/.gemini/bots/shared/scheduled-tasks/$t/
 done
 ```
 
@@ -65,6 +65,6 @@ done
 ```bash
 for t in morning-catchup-daily-bots ai-daily-afternoon; do
   diff ~/.claude/scheduled-tasks/$t/SKILL.md \
-       ~/Desktop/bots/shared/scheduled-tasks/$t/SKILL.md
+       ~/.gemini/bots/shared/scheduled-tasks/$t/SKILL.md
 done
 ```

@@ -16,7 +16,7 @@ description: 每天 15:00 由 Claude 写稿并推送 AI 日报三块（产业日
 
 **时间线（2026-09-04 改）**：本任务 15:00 触发（主力）→ 16:00 由 `com.shirley.ai-chain-health` 这一个 launchd job 按固定顺序串行体检三块（产业日报 → X 热点 → AI Builder，每块 25 分钟超时），检测到当天无运行记录就调用对应 bot 的 `claude_catchup.sh` 做无头补跑。改到下午的直接原因是 AI Builder 的上游 feed 在北京时间 14:17 才生成。
 
-工作根目录是 `/Users/jialiwu/Desktop/bots`，共享层在 `/Users/jialiwu/Desktop/bots/shared/`。
+工作根目录是 `/Users/jialiwu/.gemini/bots`，共享层在 `/Users/jialiwu/.gemini/bots/shared/`。
 
 ⚠️ **fetch 的完整输出会落盘到各 bot 的 `logs/last_context.txt`**（marker + context 原样保存）。读 stdout 时若不慎截断或输出过大被省略，**直接读这个文件**，不要重跑 fetch——重跑会再打一轮外部 API，且零产计数会被重复累加。
 
@@ -26,7 +26,7 @@ description: 每天 15:00 由 Claude 写稿并推送 AI 日报三块（产业日
 
 ### 步骤 1 — 抓取
 ```
-bash "/Users/jialiwu/Desktop/bots/AI Daily News Bot/claude_report.sh" fetch
+bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 ```
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入第二部分。
@@ -42,27 +42,27 @@ bash "/Users/jialiwu/Desktop/bots/AI Daily News Bot/claude_report.sh" fetch
 另外：`=== SOURCE_ALERT ===` 与 `=== SOURCE_ALERT_END ===` 之间若有内容，说明有 RSS 源连续 3 天以上零产。**原样记下这几行**，稍后在汇报里单列，不影响出稿流程。
 
 ### 步骤 2A — 写当日日报（`FETCH_OK` 时）
-1. Read `/Users/jialiwu/Desktop/bots/AI Daily News Bot/prompt.md`。
+1. Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt.md`。
 2. 严格按其全部规则，基于步骤 1 数据写出完整《AI 产业日报》。
 3. 硬约束：只用 `<b>` 和 `<a href>` 标签；英文原标题不翻译；日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」按 prompt.md 的速览规则写：固定 5 条、行首带星级、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
-   `/Users/jialiwu/Desktop/bots/AI Daily News Bot/logs/report_draft.txt`
+   `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
 ### 步骤 2B — 写本周回顾（`WEEKLY_OK` 时）
-1. Read `/Users/jialiwu/Desktop/bots/AI Daily News Bot/prompt_weekly.md`（**不要用 prompt.md**）。
+1. Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt_weekly.md`（**不要用 prompt.md**）。
 2. 严格按其全部规则，基于存档 + 新增素材写出完整《AI 产业周回顾》。核心是跨天合并同一线索、按一周尺度重新评分（只留 >= 4 分）、按主题分组，**不是把几天日报拼起来**。
 3. 硬约束：只用 `<b>` 和 `<a href>` 标签；**链接一律从存档里原样复制，绝不凭记忆生成 URL**；只写存档与新增素材里出现过的事实，不补充你自己知道的背景；日期区间按 prompt_weekly.md 的规则从 context 的覆盖区间推出。
 4. Write 纯正文到同一个文件：
-   `/Users/jialiwu/Desktop/bots/AI Daily News Bot/logs/report_draft.txt`
+   `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
 ### 步骤 3 — 发送
 ```
-bash "/Users/jialiwu/Desktop/bots/AI Daily News Bot/claude_report.sh" send
+bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" send
 ```
 稿件超过 4096 字时脚本会自动按段落切分并加 (n/N) 页码，无需你处理。
 
 ### 步骤 4 — 核对
-`tail -1 "/Users/jialiwu/Desktop/bots/AI Daily News Bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。周回顾成功时这行会写成 `Claude写稿 → 周回顾N天存档 + 新增M条 → ...`，汇报时注明这天出的是周回顾。
+`tail -1 "/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。周回顾成功时这行会写成 `Claude写稿 → 周回顾N天存档 + 新增M条 → ...`，汇报时注明这天出的是周回顾。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## 第一部分之 B：X 热点播报（Claude 写 1 稿）
@@ -89,7 +89,7 @@ Fable 5.1 的不同侧面），不是当天话题的巡览。所以这一块**�
 
 ### 步骤 1 — 取材
 ```
-bash "/Users/jialiwu/Desktop/bots/x-hotspot-bot/claude_report.sh" fetch
+bash "/Users/jialiwu/.gemini/bots/x-hotspot-bot/claude_report.sh" fetch
 ```
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入汇报。
@@ -109,7 +109,7 @@ context 里有两个区块：`=== AINEWS_BEGIN/END ===` 是主素材（Twitter R
    连续 3 天零产。**原样记下这几行**，稍后在汇报里单列，不影响出稿流程。
 
 ### 步骤 2 — 写稿
-1. Read `/Users/jialiwu/Desktop/bots/x-hotspot-bot/prompt.md`。
+1. Read `/Users/jialiwu/.gemini/bots/x-hotspot-bot/prompt.md`。
 2. 严格按其全部规则，基于步骤 1 的素材写出完整《X 热点播报》。
 3. **硬约束（前两条违反会被 send 直接拒发，或让稿子失去意义）：**
    - **每条话题至少带一条 `x.com/<user>/status/<id>` 原帖直链**，且**必须从素材的「原帖排行」里原样复制，绝不凭记忆生成 status id**。send 会检查，全篇一条都没有直接 `[FAIL]`。
@@ -117,16 +117,16 @@ context 里有两个区块：`=== AINEWS_BEGIN/END ===` 是主素材（Twitter R
    - **分歧必须保留**：素材里有 `Supportive / Neutral / Critical` 三档，只写叫好的一侧等于骗人。重要话题都要给出「有人说 A、也有人说 B」。
    - 只用 `<b>` 和 `<a href>` 标签；英文人名、账号 handle、模型名不翻译。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
-   `/Users/jialiwu/Desktop/bots/x-hotspot-bot/logs/report_draft.txt`
+   `/Users/jialiwu/.gemini/bots/x-hotspot-bot/logs/report_draft.txt`
 
 ### 步骤 3 — 发送
 ```
-bash "/Users/jialiwu/Desktop/bots/x-hotspot-bot/claude_report.sh" send
+bash "/Users/jialiwu/.gemini/bots/x-hotspot-bot/claude_report.sh" send
 ```
 超长会自动按段落切分并加 (n/N) 页码，无需你处理。
 
 ### 步骤 4 — 核对
-`tail -1 "/Users/jialiwu/Desktop/bots/x-hotspot-bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
+`tail -1 "/Users/jialiwu/.gemini/bots/x-hotspot-bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
 若末行是 `[FAIL] 稿件里没有任何 x.com 原帖链接`，说明步骤 2 的硬约束没做到——**回步骤 2 重写并补上原帖直链**，不要跳过，也不要重跑 fetch。这是本 bot 唯一允许在同一轮里重写的情形。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -140,7 +140,7 @@ bash "/Users/jialiwu/Desktop/bots/x-hotspot-bot/claude_report.sh" send
 
 ### 步骤 1 — 取材
 ```
-bash "/Users/jialiwu/Desktop/bots/ai-builder-bot/claude_report.sh" fetch
+bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" fetch
 ```
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入第二部分。
@@ -162,7 +162,7 @@ context 顶部给了「feed 生成时间」和「推文实际时间区间」，*
 上游 CI 多半真的断了。**照常出稿**，但汇报时注明滞后几小时。
 
 ### 步骤 2 — 写稿
-1. Read `/Users/jialiwu/Desktop/bots/ai-builder-bot/prompt.md`。
+1. Read `/Users/jialiwu/.gemini/bots/ai-builder-bot/prompt.md`。
 2. 严格按其全部规则，基于步骤 1 的素材写出完整《AI Builder 日报》。
 3. **硬约束（前两条违反会被 send 拒发或让稿子失去意义）：**
    - **每条话题至少带一条 `x.com/<user>/status/<id>` 原推直链**，且**必须从素材的
@@ -172,17 +172,17 @@ context 顶部给了「feed 生成时间」和「推文实际时间区间」，*
      搞混——那个是复盘引用次数，本块没有那个概念。
    - 只用 `<b>` 和 `<a href>` 标签；英文人名、handle、公司名、模型名不翻译。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
-   `/Users/jialiwu/Desktop/bots/ai-builder-bot/logs/report_draft.txt`
+   `/Users/jialiwu/.gemini/bots/ai-builder-bot/logs/report_draft.txt`
 
 ### 步骤 3 — 发送
 ```
-bash "/Users/jialiwu/Desktop/bots/ai-builder-bot/claude_report.sh" send
+bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" send
 ```
 超长会自动按段落切分并加 (n/N) 页码，无需你处理。发送目标与 AI 产业日报是同一个
 webhook，群里显示为同一个机器人。
 
 ### 步骤 4 — 核对
-`tail -1 "/Users/jialiwu/Desktop/bots/ai-builder-bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
+`tail -1 "/Users/jialiwu/.gemini/bots/ai-builder-bot/logs/run.log"`：末行 `[OK] ... Claude写稿` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
 若末行是 `[FAIL] 稿件里没有任何 x.com 原推链接`，说明步骤 2 的硬约束没做到——**回步骤 2 重写并补上原推直链**，不要跳过，也不要重跑 fetch。
 
 ━━━━━━━━━━━━━━━

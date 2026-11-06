@@ -8,7 +8,7 @@
 2026-08-30 排查发现三个 health job 连续 11 天 `exit 78 (EX_CONFIG)`，整套体检 +
 自愈 + 补跑的安全网静默失效，而唯一的告警渠道恰好也是它自己。
 
-根因不在脚本：`~/Desktop/bots/*/logs/health_check.log` 被 TCC 打上 `com.apple.macl`
+根因不在脚本：`~/.gemini/bots/*/logs/health_check.log` 被 TCC 打上 `com.apple.macl`
 （`~/Desktop`、`~/Documents`、`~/Downloads` 都受保护），launchd 打不开它，
 连 bash 都没 exec 就 EX_CONFIG。
 
