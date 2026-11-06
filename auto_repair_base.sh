@@ -35,7 +35,9 @@ ENABLE_CLAUDE_REPAIR="${ENABLE_CLAUDE_REPAIR:-0}"
 # 解析 claude CLI 绝对路径（launchd 的 PATH 极简，不能依赖裸 `claude`）。
 # 可用环境变量 CLAUDE_BIN 指定；否则在常见安装位置里探测。
 if [ -z "${CLAUDE_BIN:-}" ]; then
-    for _c in "$HOME/.local/bin/claude" "$HOME/.claude/local/claude" \
+    for _c in "$HOME/.local/bin/agy" /usr/local/bin/agy /opt/homebrew/bin/agy \
+              "$(command -v agy 2>/dev/null)" \
+              "$HOME/.local/bin/claude" "$HOME/.claude/local/claude" \
               /opt/homebrew/bin/claude /usr/local/bin/claude \
               "$(command -v claude 2>/dev/null)"; do
         if [ -n "$_c" ] && [ -x "$_c" ]; then CLAUDE_BIN="$_c"; break; fi

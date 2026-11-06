@@ -50,17 +50,19 @@ if [ -f "$PLIST" ]; then
         | sed -n 's/^[[:space:]]*\([A-Za-z_][A-Za-z0-9_]*\) = \(.*\)$/\1=\2/p')
 fi
 
-# ── 解析 claude CLI 绝对路径（launchd 的 PATH 极简）──────────────
+# ── 解析 Antigravity (agy) / claude CLI 绝对路径（优先使用 agy）──────
 if [ -z "${CLAUDE_BIN:-}" ]; then
-    for _c in "$HOME/.local/bin/claude" "$HOME/.claude/local/claude" \
+    for _c in "$HOME/.local/bin/agy" /usr/local/bin/agy /opt/homebrew/bin/agy \
+              "$(command -v agy 2>/dev/null)" \
+              "$HOME/.local/bin/claude" "$HOME/.claude/local/claude" \
               /opt/homebrew/bin/claude /usr/local/bin/claude \
               "$(command -v claude 2>/dev/null)"; do
         if [ -n "$_c" ] && [ -x "$_c" ]; then CLAUDE_BIN="$_c"; break; fi
     done
 fi
 if [ -z "${CLAUDE_BIN:-}" ]; then
-    log "未找到 claude CLI，无法补跑"
-    notify "无头补跑失败：未找到 claude CLI"
+    log "未找到 agy 或 claude CLI，无法补跑"
+    notify "无头补跑失败：未找到 agy/claude CLI"
     exit 1
 fi
 
@@ -73,7 +75,11 @@ PROMPT="你是 ${BOT_NAME} 的无头补跑代理。今天 10:00 的 Claude routi
 4. 确认 logs/run.log 出现今天（${TODAY}）的 [OK] 行。
 严格遵循本目录 AGENTS.md / CLAUDE.md 的全部规范与修改禁区，不要修改任何代码。完成后只输出一行：DONE 或 FAILED: <原因>。"
 
-(cd "$DIR" && "$CLAUDE_BIN" -p "$PROMPT" --dangerously-skip-permissions >>"$CATCHUP_LOG" 2>&1)
+if [[ "$CLAUDE_BIN" == *"/agy" ]]; then
+    (cd "$DIR" && "$CLAUDE_BIN" --print-timeout 20m -p "$PROMPT" --dangerously-skip-permissions >>"$CATCHUP_LOG" 2>&1)
+else
+    (cd "$DIR" && "$CLAUDE_BIN" -p "$PROMPT" --dangerously-skip-permissions >>"$CATCHUP_LOG" 2>&1)
+fi
 
 if ok_today; then
     log "✅ 无头补跑成功"
