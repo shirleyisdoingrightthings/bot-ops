@@ -662,9 +662,8 @@ def update_zero_streak(path, zero_sources, all_sources, threshold: int = 3) -> d
 # 策略：先试配置端口；不通则依次探测候选端口，命中即改用并告警。
 # 探测用 gstatic 的 204 端点（轻量、无内容、境外可达性可靠）。
 
-# 探测顺序即优先级：先 12450（当前代理），不通再试 1082、7897。
-# 每多一个候选最多多花一个 timeout（默认 5 秒），且只在配置端口已经不通时才走到。
-PROXY_CANDIDATES = ("12450", "1082", "7897")
+# 探测顺序即优先级：优先 1082，其次 12450（已移除 7897）。
+PROXY_CANDIDATES = ("1082", "12450")
 _PROBE_URL = "https://www.gstatic.com/generate_204"
 
 
@@ -689,35 +688,33 @@ def resolve_proxy(configured: str | None, candidates=PROXY_CANDIDATES,
     """返回 (可用代理 URL, 是否发生了端口切换)。
 
     - configured 为空 → (None, False)，调用方视为直连放行
-    - configured 可用 → (configured, False)
-    - configured 不通但某候选端口可用 → (该候选, True)
+    - 按 candidates 优先级（1082 → 12450）依次探测，命中即返回 (该候选, 是否与原配置不同)
     - 本地端口全不通但 TUN/直连可达 → ("", True)，调用方清空代理环境变量改走直连
-    - 全都不通 → (None, False)，调用方按代理不可用处理
-
-    候选端口探测失败每个只花 timeout 秒上限，默认三个候选最多 15 秒。"""
+    - 全都不通 → (None, False)，调用方按代理不可用处理"""
     if not configured:
         return None, False
 
-    if _probe(configured, timeout):
-        return configured, False
-
-    # 从配置值里拆出 scheme 与 host，只替换端口
+    # 从配置值里拆出 scheme 与 host，严格按 candidates 优先级（1082 → 12450）探测
     m = re.match(r"^(https?://)([^:/]+)(?::(\d+))?", configured.strip())
     scheme = m.group(1) if m else "http://"
     host = m.group(2) if m else "127.0.0.1"
     cur_port = m.group(3) if m else None
 
-    for port in candidates:
-        if port == cur_port:
-            continue          # 已经试过配置端口了
+    ports_to_try = list(candidates)
+    if cur_port and cur_port not in ports_to_try:
+        ports_to_try.append(cur_port)
+
+    for port in ports_to_try:
         alt = f"{scheme}{host}:{port}"
         if _probe(alt, timeout):
-            print(f"[bot_utils] 配置的代理 {configured} 不通，已自动改用 {alt}")
-            return alt, True
+            switched = (port != cur_port)
+            if switched:
+                print(f"[bot_utils] 已按优先级自动选用代理 {alt}（原配置 {configured}）")
+            return alt, switched
 
     # 本地代理端口均不通时，尝试 TUN 模式 / 全局直连兜底
     if _probe(None, timeout):
-        print(f"[bot_utils] 配置的代理 {configured} 及候选端口均不通，但直连(TUN模式)可达，已自动切换为直连")
+        print(f"[bot_utils] 本地代理端口（{', '.join(ports_to_try)}）均不通，但直连(TUN模式)可达，已自动切换为直连")
         return "", True
 
     return None, False
