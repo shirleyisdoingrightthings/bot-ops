@@ -668,10 +668,17 @@ PROXY_CANDIDATES = ("12450", "1082", "7897")
 _PROBE_URL = "https://www.gstatic.com/generate_204"
 
 
-def _probe(proxy_url: str, timeout: int = 5) -> bool:
+def _probe(proxy_url: str | None, timeout: int = 5) -> bool:
     try:
-        requests.get(_PROBE_URL, proxies={"http": proxy_url, "https": proxy_url},
-                     timeout=timeout)
+        if proxy_url:
+            requests.get(_PROBE_URL, proxies={"http": proxy_url, "https": proxy_url},
+                         timeout=timeout)
+        else:
+            # TUN 模式 / 海外直连兜底：显式关闭 trust_env 绕过环境变量中的旧代理端口
+            s = requests.Session()
+            s.trust_env = False
+            s.proxies = {}
+            s.get(_PROBE_URL, timeout=timeout)
         return True
     except Exception:
         return False
@@ -684,6 +691,7 @@ def resolve_proxy(configured: str | None, candidates=PROXY_CANDIDATES,
     - configured 为空 → (None, False)，调用方视为直连放行
     - configured 可用 → (configured, False)
     - configured 不通但某候选端口可用 → (该候选, True)
+    - 本地端口全不通但 TUN/直连可达 → ("", True)，调用方清空代理环境变量改走直连
     - 全都不通 → (None, False)，调用方按代理不可用处理
 
     候选端口探测失败每个只花 timeout 秒上限，默认三个候选最多 15 秒。"""
@@ -706,6 +714,11 @@ def resolve_proxy(configured: str | None, candidates=PROXY_CANDIDATES,
         if _probe(alt, timeout):
             print(f"[bot_utils] 配置的代理 {configured} 不通，已自动改用 {alt}")
             return alt, True
+
+    # 本地代理端口均不通时，尝试 TUN 模式 / 全局直连兜底
+    if _probe(None, timeout):
+        print(f"[bot_utils] 配置的代理 {configured} 及候选端口均不通，但直连(TUN模式)可达，已自动切换为直连")
+        return "", True
 
     return None, False
 
@@ -817,6 +830,7 @@ def proxy_ok(configured: str | None, session=None) -> tuple[bool, str | None]:
     - 没配代理 → (True, None)，视为直连放行
     - 配了且通 → (True, 该代理)
     - 配了不通但候选端口通 → 就地改写环境变量与 session.proxies，返回 (True, 新代理)
+    - 本地端口均不通但 TUN/直连可达 → 清空环境变量与 session.proxies，返回 (True, None)
     - 全都不通 → (False, 原配置值)，保留原值是为了让调用方能打进 SKIP_PROXY 的报错里
 
     session 传 requests.Session 时一并改其 proxies；AI bot 不持有自己的 Session，
@@ -828,6 +842,12 @@ def proxy_ok(configured: str | None, session=None) -> tuple[bool, str | None]:
     if resolved is None:
         return (not configured), configured
     if switched:
+        if resolved == "":
+            if session is not None:
+                session.proxies = {}
+            for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy"):
+                os.environ.pop(k, None)
+            return True, None
         if session is not None:
             session.proxies = {"http": resolved, "https": resolved}
         # feedparser 走 urllib，必须同步环境变量（用赋值而非 setdefault）
