@@ -925,16 +925,18 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
     print(f"  ✓ 推送成功（{sent} 条）", file=sys.stderr)
     Path(cache_file).unlink(missing_ok=True)
 
-    # 只把 x.com 原帖记入去重档案：Techmeme 之类的媒体链接同一话题连着几天
-    # 出现是正常的，拿它去重会误伤。
-    total = record_sent_urls(sent_urls, x_links)
-    print(f"  ✓ 已归档 {len(x_links)} 条{link_label}链接用于跨天去重（档案共 {total} 条）",
-          file=sys.stderr)
-
     try:
         meta = json.loads(Path(fetch_meta).read_text(encoding="utf-8"))
     except Exception:
         meta = {"log_summary": "", "metrics": {}}
+
+    # 把 x.com 原帖以及 fetch_meta 记录的主源期刊链接（issue_urls，如 AINews 期次 URL）
+    # 一并记入去重档案，确保同一期 AINews 不会被跨天重复播报。
+    issue_urls = meta.get("metrics", {}).get("issue_urls", []) or []
+    total = record_sent_urls(sent_urls, x_links + list(issue_urls))
+    print(f"  ✓ 已归档 {len(x_links)} 条{link_label}链接"
+          f"{f' + {len(issue_urls)} 条期刊链接' if issue_urls else ''}用于跨天去重（档案共 {total} 条）",
+          file=sys.stderr)
     duration = round(time.time() - t0, 1)
     write_log("OK",
               f"Claude写稿 → {meta.get('log_summary', '')} → 飞书推送成功"

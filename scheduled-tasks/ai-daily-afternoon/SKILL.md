@@ -97,19 +97,16 @@ bash "/Users/jialiwu/.gemini/bots/x-hotspot-bot/claude_report.sh" fetch
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入汇报。
 - `=== SKIP_PROXY ===`：本地代理不可用。**不要继续**，记「代理不可用未推送」。
-- `=== NO_TOPICS ===`：窗口内没抓到可用素材。**不要继续**，记「无可用素材」。
+- `=== NO_TOPICS ===`：30h 窗口内上游 Latent Space `[AINews]` 无未播新刊（如周末/周一停更，或最新一期已播过）。**不要继续写稿或推送**，直接记「未检测到上游 AINews 新刊，今日跳过推送」，进入下一部分。
 - `=== FETCH_OK ===`：提取 `=== CONTEXT_BEGIN ===` 与 `=== CONTEXT_END ===` 之间内容，进入步骤 2。
 
 context 里有两个区块：`=== AINEWS_BEGIN/END ===` 是主素材（Twitter Recap 正文 + **原帖排行**），
-`=== TECHMEME_BEGIN/END ===` 是同期主流科技媒体报道，只用来判断话题是不是只在小圈层里热；
+`=== TECHMEME_BEGIN/END ===` 是同期主流科技媒体报道（30h 窗口），只用来判断话题是不是只在小圈层里热；
 对不上就整块不用，别硬塞进稿子。
 
-**⚠️ 两个必须原样传达给读者的信号：**
-1. context 顶部若出现「**⚠️ 窗口内没有新一期，以下是最新的一期，距今 N 天**」，
-   说明 AINews 停更或延迟。**照常写稿**，但开头第一行必须写明这批讨论发生在哪一天，
-   **绝对不能写成「今天」**，汇报时也要注明素材滞后几天。
-2. `=== SOURCE_ALERT ===` ~ `=== SOURCE_ALERT_END ===` 之间若有内容，说明某个 provider
-   连续 3 天零产。**原样记下这几行**，稍后在汇报里单列，不影响出稿流程。
+**⚠️ 信号说明：**
+`=== SOURCE_ALERT ===` ~ `=== SOURCE_ALERT_END ===` 之间若有内容，说明某个 provider
+连续 3 天零产。**原样记下这几行**，稍后在汇报里单列，不影响出稿流程。
 
 ### 步骤 2 — 写稿
 1. Read `/Users/jialiwu/.gemini/bots/x-hotspot-bot/prompt.md`。
