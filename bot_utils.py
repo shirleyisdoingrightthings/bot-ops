@@ -470,6 +470,8 @@ def html_to_lark_md(text: str) -> list:
     href 只认 http/https，其余（javascript: 之类）连同标签一起降级成纯文本。"""
     lines = []
     for line in (text or "").split("\n"):
+        # 预处理：修复 <b>1. <a href="...">...</a></b> 结构，避免 <b> 与 <a> 嵌套时 <b> 被剥除
+        line = re.sub(r"<b>(\d+\.)\s*(<a\s+[^>]+>)", r"<b>\1</b> \2", line)
         buf, pos = [], 0
         for m in _A_RE.finditer(line):
             if m.start() > pos:
@@ -486,7 +488,10 @@ def html_to_lark_md(text: str) -> list:
             pos = m.end()
         if pos < len(line):
             buf.append(_md_bold_runs(line[pos:]))
-        lines.append("".join(buf))
+        res_line = "".join(buf)
+        # 关键防护：如果行首为 '1. ' 等纯数字编号，转为 '**1.** '，防止飞书 Card 2.0 识别为有序列表进而吞掉后续提行
+        res_line = re.sub(r"^(\d+\.)\s+", r"**\1** ", res_line)
+        lines.append(res_line)
     return lines
 
 
