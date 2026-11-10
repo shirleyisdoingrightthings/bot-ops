@@ -46,7 +46,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 ### 步骤 2A — 写当日日报（`FETCH_OK` 时）
 1. Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt.md`。
 2. 严格按其全部规则，基于步骤 1 数据写出完整《AI 产业日报》。
-3. 硬约束：只用 `<b>` 和 `<a href>` 标签；英文原标题不翻译；日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」按 prompt.md 的速览规则写：固定 5 条、行首带星级、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。The Details 严禁使用 bullet points（如「· 」、「- 」），必须采用单个连贯完整的高密度叙事段落，格式与《美股要闻》保持 100% 镜像一致。
+3. 硬约束：只用 `<b>` 和 `<a href>` 标签；英文原标题不翻译；日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」按 prompt.md 的速览规则写：固定 5 条、行首带「· 」bullet point 分行排列且去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《美股要闻》保持 100% 镜像一致。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
    `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
