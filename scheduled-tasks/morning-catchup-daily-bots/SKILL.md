@@ -46,7 +46,7 @@ bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 
 消息②（美股要闻播报）：
 4. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/us stock bot/prompt_news.md`。
-5. 严格按其规则写出《美股要闻》。开头的「⚡ 30秒速览」按速览规则写：固定 5 条、行首带星级、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。
+5. 严格按其规则写出《美股要闻》。开头的「⚡ 30秒速览」按速览规则写：固定 5 条、行首带星级、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。The Details 严禁使用 bullet points（如「· 」、「- 」），必须采用单个连贯完整的高密度叙事段落，格式与《AI 产业日报》保持 100% 镜像一致。
 6. 使用 `write_file`（`Overwrite: true`）写入 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_news.txt`。
 
 两稿硬约束：日期一律用 context 里的【收盘交易日】，不要用今天的日期；消息①只用 `<b>` 加粗，不用 markdown `**`；消息②只用 `<b>` 和 `<a href>`；英文原标题不翻译。
