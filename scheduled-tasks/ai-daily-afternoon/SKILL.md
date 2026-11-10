@@ -46,7 +46,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 ### 步骤 2A — 写当日日报（`FETCH_OK` 时）
 1. Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt.md`。
 2. 严格按其全部规则，基于步骤 1 数据写出完整《AI 产业日报》。
-3. 硬约束：只用 `<b>` 和 `<a href>` 标签；英文原标题不翻译；日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」按 prompt.md 的速览规则写：固定 5 条、行首带「· 」bullet point 分行排列且去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《美股要闻》保持 100% 镜像一致。
+3. 硬约束：只用 `<b>` 和 `<a href>` 标签；英文原标题不翻译；日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」为独立小标题，下方空一行后接 5 条无序列表内容（每行均以「- 」开头分行排列，严禁与标题粘在同一行，严禁写成单段连续文本），彻底去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《美股要闻》保持 100% 镜像一致。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
    `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
@@ -54,7 +54,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 ⚠️ **模型动态路由（方案 A）：** 平时周一至周六的日常任务由主 Agent（`Flash` 模型）直接完成；唯独周日触发 `=== WEEKLY_OK ===` 时，由于需要跨 6 天、约 1.5 万字存档做线索合并与重新评分，**必须调用 `invoke_subagent`（设置 `TypeName: "self"`, `Model: "pro"`）指派 `Pro` 子模型专门撰写《AI 产业周回顾》**，写完直接落盘到 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`：
 1. 让 `Pro` 子模型 Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt_weekly.md`（**不要用 prompt.md**）及 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/last_context.txt`。
 2. 严格按其全部规则，基于存档 + 新增素材写出完整《AI 产业周回顾》。核心是跨天合并同一线索、按一周尺度重新评分（只留 >= 4 分）、按主题分组，**不是把几天日报拼起来**。
-3. 硬约束：只用 `<b>` 和 `<a href>` 标签；**链接一律从存档里原样复制，绝不凭记忆生成 URL**；只写存档与新增素材里出现过的事实，不补充你自己知道的背景；日期区间按 prompt_weekly.md 的规则从 context 的覆盖区间推出。
+3. 硬约束：只用 `<b>` 和 `<a href>` 标签；**链接一律从存档里原样复制，绝不凭记忆生成 URL**；只写存档与新增素材里出现过的事实，不补充你自己知道的背景；日期区间按 prompt_weekly.md 的规则从 context 的覆盖区间推出。「⚡ 本周 5 件事」与「📈 本周数字」严格采用「- 」列表符并与标题空行隔开，正文组别与新闻条目均以空行断开独立占行。
 4. 使用 `write_file`（`Overwrite: true`）将纯正文写入同一个文件：
    `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 

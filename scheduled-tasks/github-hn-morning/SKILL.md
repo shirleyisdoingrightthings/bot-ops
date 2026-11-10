@@ -35,6 +35,8 @@ bash "/Users/jialiwu/.gemini/bots/github-hn-bot/claude_report.sh" fetch
    若为 `=== WEEKLY_OK ===`，使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/github-hn-bot/prompt_weekly.md`。
 2. 严格按对应规范写稿：
    - 仅使用 `<b>` 和 `<a href="URL">` 标签，严禁使用 Markdown `**` 或代码块。
+   - 开头的「⚡ 30秒速览」为独立小标题，下方空一行后接 3 条无序列表内容（每行均以「- 」开头分行排列，严禁与标题粘在同一行）。
+   - GitHub 项目单列场景定位与适用建议，采用「痛点+机制+对比」大白话叙述，启发升级为具象的「个人 Build 姿势」并敢于劝退；HN 热榜提炼「这帖在聊啥」与「评论区交锋与避坑」。
    - 状态标为 `🆕 首次上榜` 的项目/帖子完整展开；状态标为 `🔁 重复霸榜 / 重复在榜（首次见于 MM月DD日 推送）` 的项目/帖子用 1～2 句话简述并注明 `<b>（见 MM月DD日 推送）</b>`。
 3. 使用 `write_file`（`Overwrite: true`）将纯正文写入 `/Users/jialiwu/.gemini/bots/github-hn-bot/logs/report_draft.txt`。
 

@@ -41,12 +41,12 @@ bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 ### 步骤 2 — 写两稿
 消息①（美股收盘 & 加密行情仪表盘）：
 1. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/us stock bot/prompt_market.md`。
-2. 严格按其规则，结合 context 里的美股行情、24h 加密核心行情与新闻，写出《美股收盘 & 加密行情复盘》。
+2. 严格按其规则，结合 context 里的美股行情、24h 加密核心行情与新闻，写出《美股收盘 & 加密行情复盘》。各核心指标、板块细项与决策仪表盘字段必须以空行断开独立占行，严禁挤在同一行。
 3. 使用 `write_file`（`Overwrite: true`）写入 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_market.txt`。
 
 消息②（美股要闻播报）：
 4. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/us stock bot/prompt_news.md`。
-5. 严格按其规则写出《美股要闻》。开头的「⚡ 30秒速览」按速览规则写：固定 5 条、行首带「· 」bullet point 分行排列且去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《AI 产业日报》保持 100% 镜像一致。
+5. 严格按其规则写出《美股要闻》。开头的「⚡ 30秒速览」为独立小标题，下方空一行后接 5 条无序列表内容（每行均以「- 」开头分行排列，严禁与标题粘在同一行，严禁写成单段连续文本），彻底去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《AI 产业日报》保持 100% 镜像一致。
 6. 使用 `write_file`（`Overwrite: true`）写入 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_news.txt`。
 
 两稿硬约束：日期一律用 context 里的【收盘交易日】，不要用今天的日期；消息①只用 `<b>` 加粗，不用 markdown `**`；消息②只用 `<b>` 和 `<a href>`；英文原标题不翻译。
