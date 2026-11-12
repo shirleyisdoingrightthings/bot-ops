@@ -1029,6 +1029,18 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
     print(f"  ✓ 推送成功（{sent} 条）", file=sys.stderr)
     Path(cache_file).unlink(missing_ok=True)
 
+    # 自动同步归档到 Notion「每日情报归档与决策看板」数据库
+    try:
+        from notion_archive import archive_to_notion
+        source_name = "🐦 X 热点播报" if link_label == "原帖" else "🛠️ AI Builder"
+        ok, res = archive_to_notion(report, source_name)
+        if ok:
+            print(f"  ✓ 已同步归档至 Notion: {res}", file=sys.stderr)
+        else:
+            print(f"  [WARN] Notion 归档未完成: {res}", file=sys.stderr)
+    except Exception as e:
+        print(f"  [WARN] Notion 归档调用失败: {e}", file=sys.stderr)
+
     try:
         meta = json.loads(Path(fetch_meta).read_text(encoding="utf-8"))
     except Exception:

@@ -24,7 +24,7 @@ description: 每天 15:00 由 Claude 写稿并推送 AI 日报三块（产业日
 
 ## 第一部分之 A：AI 产业日报（Claude 写 1 稿）
 
-**⚠️ 本 bot 周日不出日报，改出《AI 产业周回顾》。** 是否周日由脚本自己判断（机器时区就是北京时间），你不需要算星期几，只看 stdout 给的标记：`=== FETCH_OK ===` = 当日日报，`=== WEEKLY_OK ===` = 本周回顾。两者只差「读哪份 prompt」，发送与核对完全一致。
+**⚠️ 本 bot 每日统一出《AI 产业日报》（周日亦按当日客观新闻出日报，不跑周回顾）。** 全局唯一个人/项目周趋势回顾已收敛至 GitHub Trending 早报。
 
 ### 步骤 1 — 抓取
 ```
@@ -35,11 +35,6 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 - `=== SKIP_PROXY ===`：本地代理不可用。**不要继续**，记「代理不可用未推送」，提示用户开代理后可手动重跑该 bot 的 `claude_report.sh fetch` 全流程。
 - `=== NO_NEWS ===`：24 小时无有效新闻。**不要继续**，记「无有效新闻」。
 - `=== FETCH_OK ===`：**当日日报**。提取 `=== CONTEXT_BEGIN ===` 与 `=== CONTEXT_END ===` 之间内容作为新闻数据，进入步骤 2A。
-- `=== WEEKLY_OK ===`：**本周回顾**（周日）。素材有两段，都要带上：`=== ARCHIVE_BEGIN ===` ~ `=== ARCHIVE_END ===` 之间是本周每天已推送的日报全文（主素材），`=== CONTEXT_BEGIN ===` ~ `=== CONTEXT_END ===` 之间是最近 24 小时的新增原始素材（可能为空）。进入步骤 2B。
-
-周回顾还可能带 `=== ARCHIVE_GAP ===` ~ `=== ARCHIVE_GAP_END ===` 块，列出本周哪几天没有存档
-（那几天根本没出稿，多半是没开电脑）。**照常写回顾**，但在最后汇报时注明「本周回顾覆盖不全，缺 X 天」，
-并且不要在稿子里假装那几天的事件也已涵盖。
 
 另外：`=== SOURCE_ALERT ===` 与 `=== SOURCE_ALERT_END ===` 之间若有内容，说明有 RSS 源连续 3 天以上零产。**原样记下这几行**，稍后在汇报里单列，不影响出稿流程。
 
@@ -48,14 +43,6 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 2. 严格按其全部规则，基于步骤 1 数据写出完整《AI 产业日报》。
 3. 硬约束：只用 `<b>` 和 `<a href>` 标签；英文原标题不翻译；日期用 context 里的「今天日期」。开头的「⚡ 30秒速览」为独立小标题，下方空一行后接 5 条无序列表内容（每行均以「- 」开头分行排列，严禁与标题粘在同一行，严禁写成单段连续文本），彻底去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《美股要闻》保持 100% 镜像一致。
 4. Write 纯正文（无解释、无 markdown 代码块包裹）到：
-   `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
-
-### 步骤 2B — 写本周回顾（`WEEKLY_OK` 时，自动调用 `Pro` 模型写稿）
-⚠️ **模型动态路由（方案 A）：** 平时周一至周六的日常任务由主 Agent（`Flash` 模型）直接完成；唯独周日触发 `=== WEEKLY_OK ===` 时，由于需要跨 6 天、约 1.5 万字存档做线索合并与重新评分，**必须调用 `invoke_subagent`（设置 `TypeName: "self"`, `Model: "pro"`）指派 `Pro` 子模型专门撰写《AI 产业周回顾》**，写完直接落盘到 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`：
-1. 让 `Pro` 子模型 Read `/Users/jialiwu/.gemini/bots/AI Daily News Bot/prompt_weekly.md`（**不要用 prompt.md**）及 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/last_context.txt`。
-2. 严格按其全部规则，基于存档 + 新增素材写出完整《AI 产业周回顾》。核心是跨天合并同一线索、按一周尺度重新评分（只留 >= 4 分）、按主题分组，**不是把几天日报拼起来**。
-3. 硬约束：只用 `<b>` 和 `<a href>` 标签；**链接一律从存档里原样复制，绝不凭记忆生成 URL**；只写存档与新增素材里出现过的事实，不补充你自己知道的背景；日期区间按 prompt_weekly.md 的规则从 context 的覆盖区间推出。「⚡ 本周 5 件事」与「📈 本周数字」严格采用「- 」列表符并与标题空行隔开，正文组别与新闻条目均以空行断开独立占行。
-4. 使用 `write_file`（`Overwrite: true`）将纯正文写入同一个文件：
    `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`
 
 ### 步骤 3 — 发送
