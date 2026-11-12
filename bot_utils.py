@@ -494,14 +494,16 @@ def html_to_lark_md(text: str) -> list:
         # 关键防护 2：如果行首为 '· '、'• ' 等 unicode 点状符号，转为 markdown 标准列表符 '- '，确保飞书渲染为独立无序列表项
         res_line = re.sub(r"^[·•●▪]\s*", "- ", res_line)
 
-        # 关键防护 3：排版美学与防合流优化（解决大标题归属感、指标卡紧凑提行与板块间隔）
+        # 关键防护 3：全局飞书排版美学与防断流引擎（解决大板块间隔、条目归属性与条目内紧凑提行）
         _SECTION_HEADERS = (
             "🔥 今日领涨", "🔥 领涨",
             "❄️ 今日领跌", "❄️ 领跌",
+            "⚡ 焦点异动",
             "🔭 盘面核心叙事", "🔭 核心叙事",
             "🎯 决策仪表盘", "🎯 早盘决策仪表盘", "🎯 港股早盘决策仪表盘",
-            "⚡ 早盘三大", "⚡ 今早港股", "⚡ 焦点异动", "⚡ 30秒速览", "⚡ 本周 5 件事",
+            "⚡ 30秒速览",
             "🚀 一、", "🔥 二、", "📰 二、", "▍",
+            "⚡ 早盘三大", "⚡ 今早港股", "⚡ 本周 5 件事",
         )
         _HEADER_METRICS = (
             "📊 **核心指数", "📈 **核心指数", "📊 核心指数", "📈 核心指数",
@@ -515,18 +517,21 @@ def html_to_lark_md(text: str) -> list:
             "🪙 **加密", "🪙 加密",
             "🧭 **加密情绪", "🧭 加密情绪",
         )
-        _BREAK_PREFIXES = (
-            "🏷️", "🛠️", "⚠️", "Original:",
+        _ITEM_INTERNAL_PREFIXES = (
+            "🏷️", "🛠️", "Original:",
             "- **它是干嘛的", "- **个人 Build", "- **个人 build",
             "- **这帖在聊啥", "- **评论区交锋",
-            "**2.**", "**3.**", "**4.**", "**5.**",
-            "**6.**", "**7.**", "**8.**", "**9.**", "**10.**",
+            "- **板块内领涨", "- **板块内领跌", "- **领涨原因", "- **领跌原因",
+            "- **信号灯状态", "- **早盘信号灯", "- **👀", "- **🚨", "- **💡 分析师",
+        )
+        _BREAK_PREFIXES = (
             "原帖：", "原推：", "**素材**：", "📎 **主流媒体", "📈 本周数字", "📄 The Details"
         )
 
         clean_curr = res_line.lstrip("*# ").strip()
         curr_is_sec_header = any(clean_curr.startswith(h) for h in _SECTION_HEADERS)
         curr_is_metric = any(clean_curr.startswith(m.lstrip("*# ")) for m in _HEADER_METRICS)
+        curr_is_internal = any(clean_curr.startswith(p.lstrip("*-•· ")) for p in _ITEM_INTERNAL_PREFIXES)
 
         # 检查上一非空行是否为大标题或指标项
         prev_non_empty = ""
@@ -538,31 +543,54 @@ def html_to_lark_md(text: str) -> list:
         prev_is_sec_header = any(clean_prev.startswith(h) for h in _SECTION_HEADERS)
         prev_is_metric = any(clean_prev.startswith(m.lstrip("*# ")) for m in _HEADER_METRICS)
 
-        # 规则 A：若当前行是大标题，上方必须有且仅有一个空行（绝不粘在上一节内容上）
+        # 处理空行输入
+        if not res_line:
+            # 只有当上一行不是空行、且上一行不是大标题时，才保留空行占位（后续若遇内部字段会自动剥除）
+            if lines and lines[-1].strip() and not prev_is_sec_header:
+                lines.append("")
+            continue
+
+        # 规则 1：大板块标题（🔥领涨、❄️领跌、⚡焦点异动、🔭核心叙事、🎯决策仪表盘、⚡30秒速览、🚀一、GitHub、🔥二、HN 等）
+        # 上方必须有且仅有一个空行（彻底拉开大板块之间的距离）
         if curr_is_sec_header:
             if lines and lines[-1].strip():
                 lines.append("")
-        # 规则 B：若紧跟大标题之后的第一行内容（如 **1.** 或 - **信号灯），坚决不留空行，若有空行立即剔除
-        elif prev_is_sec_header:
+            lines.append(res_line)
+            continue
+
+        # 规则 2：紧跟大标题之后的第一行内容，坚决不留空行，紧贴大标题
+        if prev_is_sec_header:
             if lines and not lines[-1].strip():
                 lines.pop()
-        # 规则 C：顶部核心指标卡片（核心指数、市场宽度、趋势乖离、两市量能/外围映射等）保持紧凑提行，彼此之间绝不留空行
-        elif curr_is_metric and prev_is_metric:
+            lines.append(res_line)
+            continue
+
+        # 规则 3：条目内部细项（场景定位、适用建议、Original、它是干嘛的、评论区交锋等），坚决不留空行，紧凑提行
+        if curr_is_internal:
             if lines and not lines[-1].strip():
                 lines.pop()
-        # 规则 D：其余需分段的独立条目（如 **2.**、**3.** 板块间距、原帖链接等），若上方无空行则补充空行
-        elif any(res_line.startswith(p) for p in _BREAK_PREFIXES) and lines and lines[-1].strip():
+            lines.append(res_line)
+            continue
+
+        # 规则 4：顶部核心指标卡各行之间坚决不留空行，紧凑提行
+        if curr_is_metric and prev_is_metric:
+            if lines and not lines[-1].strip():
+                lines.pop()
+            lines.append(res_line)
+            continue
+
+        # 规则 5：独立条目编号（如 **2.**, **3.** 等后续项目/帖子/板块），上方必须空一行隔开不同条目
+        if re.match(r"^\*\*[2-9]\.\*\*", res_line) or re.match(r"^\*\*1[0-9]\.\*\*", res_line):
+            if lines and lines[-1].strip():
+                lines.append("")
+            lines.append(res_line)
+            continue
+
+        # 规则 6：其余特殊前缀（原帖、原推等）
+        if any(res_line.startswith(p) for p in _BREAK_PREFIXES) and lines and lines[-1].strip():
             lines.append("")
-        elif (
-            res_line.startswith("- ")
-            and lines
-            and lines[-1].strip()
-            and not lines[-1].startswith("- ")
-            and not prev_is_sec_header
-            and not re.match(r"^\*\*\d+\.", clean_prev)
-            and not res_line.startswith(("- **板块内领涨", "- **板块内领跌"))
-        ):
-            lines.append("")
+
+        lines.append(res_line)
 
         lines.append(res_line)
     return lines

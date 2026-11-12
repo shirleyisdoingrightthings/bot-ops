@@ -11,9 +11,13 @@ description: 每天早 09:30 自动抓取 GitHub Trending（周一至周六 Dail
 
 **时间线**：每天 09:30 触发（主力）→ 10:30（或电脑开机唤醒时）由 `com.shirley.github-hn-bot-health` 检查当日是否已推送，若 09:30 因关机/休眠未跑，则自动调用 `claude_catchup.sh` 无头补跑。
 
-⚠️ **两条工具执行铁律（防截断 & 防 `$` 吞字）：**
+⚠️ **三大执行与排版铁律：**
 1. **防截断**：执行 `fetch` 后，完整输出已自动落盘到 `/Users/jialiwu/.gemini/bots/github-hn-bot/logs/last_context.txt`。若终端 stdout 显示不全或被截断，**直接使用 `read_file` 工具读取 `logs/last_context.txt`**，严禁重跑 `fetch`。
 2. **防 `$` 变量吞字**：写稿落盘时，**必须使用 `write_file` 工具（设置 `Overwrite: true`）** 写入 `/Users/jialiwu/.gemini/bots/github-hn-bot/logs/report_draft.txt`，**严禁使用 `bash` 的 `cat <<EOF` 或 `echo` 写文件**。
+3. **飞书排版美学与归属性**：
+   - ① **大板块之间必有空行**：「⚡ 30秒速览」、「🚀 一、GitHub 今日飙升榜」、「🔥 二、Hacker News 热榜」三大板块之间**必须空一行隔开**；大标题下方紧贴第一条内容无空行；
+   - ② **每个 Top 之间必有空行**：GitHub 各仓库（1与2、2与3...）以及 HN 各热帖之间**必须空一行隔开**，条理清晰；
+   - ③ **单个 Top 内部绝无空行**：项目内部（标题、场景定位、适用建议、它是干嘛的、个人 Build 姿势）以及 HN 热帖内部（标题、Original、这帖在聊啥、评论区交锋）**必须紧凑提行，严禁多余空行**，绝不脱节。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## 执行步骤
