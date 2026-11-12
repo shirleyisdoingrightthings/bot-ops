@@ -580,7 +580,7 @@ def html_to_lark_md(text: str) -> list:
             continue
 
         # 规则 5：独立条目编号（如 **2.**, **3.** 等后续项目/帖子/板块），上方必须空一行隔开不同条目
-        if re.match(r"^\*\*[2-9]\.\*\*", res_line) or re.match(r"^\*\*1[0-9]\.\*\*", res_line):
+        if re.match(r"^\*\*(?:[2-9]|\d{2,})\.", res_line):
             if lines and lines[-1].strip():
                 lines.append("")
             lines.append(res_line)
@@ -589,8 +589,6 @@ def html_to_lark_md(text: str) -> list:
         # 规则 6：其余特殊前缀（原帖、原推等）
         if any(res_line.startswith(p) for p in _BREAK_PREFIXES) and lines and lines[-1].strip():
             lines.append("")
-
-        lines.append(res_line)
 
         lines.append(res_line)
     return lines
