@@ -494,26 +494,74 @@ def html_to_lark_md(text: str) -> list:
         # 关键防护 2：如果行首为 '· '、'• ' 等 unicode 点状符号，转为 markdown 标准列表符 '- '，确保飞书渲染为独立无序列表项
         res_line = re.sub(r"^[·•●▪]\s*", "- ", res_line)
 
-        # 关键防护 3：确保独立字段（标题、指标仪表盘、板块细项、原帖链接等）与上一行之间有空行隔开，防止飞书 Card 2.0 软换行合流
+        # 关键防护 3：排版美学与防合流优化（解决大标题归属感、指标卡紧凑提行与板块间隔）
+        _SECTION_HEADERS = (
+            "🔥 今日领涨", "🔥 领涨",
+            "❄️ 今日领跌", "❄️ 领跌",
+            "🔭 盘面核心叙事", "🔭 核心叙事",
+            "🎯 决策仪表盘", "🎯 早盘决策仪表盘", "🎯 港股早盘决策仪表盘",
+            "⚡ 早盘三大", "⚡ 今早港股", "⚡ 焦点异动", "⚡ 30秒速览", "⚡ 本周 5 件事",
+            "🚀 一、", "🔥 二、", "📰 二、", "▍",
+        )
+        _HEADER_METRICS = (
+            "📊 **核心指数", "📈 **核心指数", "📊 核心指数", "📈 核心指数",
+            "🧭 **市场宽度", "🧭 市场宽度",
+            "📐 **趋势与乖离", "📐 趋势与乖离",
+            "💰 **两市量能", "💰 两市量能",
+            "🌍 **外围与流动性", "🌍 外围与流动性", "🌍 **隔夜外围", "🌍 隔夜外围",
+            "📐 **前日收盘", "📐 前日收盘", "📐 **前日港股", "📐 前日港股",
+            "🇺🇸 **隔夜中概", "🇺🇸 隔夜中概",
+            "🌡 **宏观指标", "🌡 宏观指标",
+            "🪙 **加密", "🪙 加密",
+            "🧭 **加密情绪", "🧭 加密情绪",
+        )
         _BREAK_PREFIXES = (
             "🏷️", "🛠️", "⚠️", "Original:",
             "- **它是干嘛的", "- **个人 Build", "- **个人 build",
             "- **这帖在聊啥", "- **评论区交锋",
-            "- **板块内领涨", "- **板块内领跌", "- **领涨原因", "- **领跌原因",
-            "- **早盘信号灯", "- **信号灯状态", "- **👀", "- **🚨", "- **💡 分析师",
-            "**1.**", "**2.**", "**3.**", "**4.**", "**5.**",
+            "**2.**", "**3.**", "**4.**", "**5.**",
             "**6.**", "**7.**", "**8.**", "**9.**", "**10.**",
-            "⚡ 30秒速览", "⚡ 早盘三大", "⚡ 今早港股", "⚡ 焦点异动", "⚡ 本周 5 件事",
-            "🚀 一、", "🔥 今日领涨", "❄️ 今日领跌", "🔥 领涨", "❄️ 领跌", "🔥 二、", "📰 二、", "▍",
-            "📊 **核心指数", "📈 **核心指数", "🌍 **隔夜外围", "📐 **前日收盘", "📐 **前日港股", "🇺🇸 **隔夜中概",
-            "🧭 **市场宽度", "📐 **趋势与乖离", "💰 **两市量能", "🌍 **外围与流动性",
-            "🌡 **宏观指标", "🪙 **加密（24h）", "🧭 **加密情绪",
-            "🔭 **盘面核心叙事", "🎯 早盘决策仪表盘", "🎯 港股早盘决策仪表盘", "🎯 决策仪表盘",
             "原帖：", "原推：", "**素材**：", "📎 **主流媒体", "📈 本周数字", "📄 The Details"
         )
-        if any(res_line.startswith(p) for p in _BREAK_PREFIXES) and lines and lines[-1].strip():
+
+        clean_curr = res_line.lstrip("*# ").strip()
+        curr_is_sec_header = any(clean_curr.startswith(h) for h in _SECTION_HEADERS)
+        curr_is_metric = any(clean_curr.startswith(m.lstrip("*# ")) for m in _HEADER_METRICS)
+
+        # 检查上一非空行是否为大标题或指标项
+        prev_non_empty = ""
+        for prev in reversed(lines):
+            if prev.strip():
+                prev_non_empty = prev.strip()
+                break
+        clean_prev = prev_non_empty.lstrip("*# ").strip()
+        prev_is_sec_header = any(clean_prev.startswith(h) for h in _SECTION_HEADERS)
+        prev_is_metric = any(clean_prev.startswith(m.lstrip("*# ")) for m in _HEADER_METRICS)
+
+        # 规则 A：若当前行是大标题，上方必须有且仅有一个空行（绝不粘在上一节内容上）
+        if curr_is_sec_header:
+            if lines and lines[-1].strip():
+                lines.append("")
+        # 规则 B：若紧跟大标题之后的第一行内容（如 **1.** 或 - **信号灯），坚决不留空行，若有空行立即剔除
+        elif prev_is_sec_header:
+            if lines and not lines[-1].strip():
+                lines.pop()
+        # 规则 C：顶部核心指标卡片（核心指数、市场宽度、趋势乖离、两市量能/外围映射等）保持紧凑提行，彼此之间绝不留空行
+        elif curr_is_metric and prev_is_metric:
+            if lines and not lines[-1].strip():
+                lines.pop()
+        # 规则 D：其余需分段的独立条目（如 **2.**、**3.** 板块间距、原帖链接等），若上方无空行则补充空行
+        elif any(res_line.startswith(p) for p in _BREAK_PREFIXES) and lines and lines[-1].strip():
             lines.append("")
-        elif res_line.startswith("- ") and lines and lines[-1].strip() and not lines[-1].startswith("- "):
+        elif (
+            res_line.startswith("- ")
+            and lines
+            and lines[-1].strip()
+            and not lines[-1].startswith("- ")
+            and not prev_is_sec_header
+            and not re.match(r"^\*\*\d+\.", clean_prev)
+            and not res_line.startswith(("- **板块内领涨", "- **板块内领跌"))
+        ):
             lines.append("")
 
         lines.append(res_line)
