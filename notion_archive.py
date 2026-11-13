@@ -30,16 +30,19 @@ DEFAULT_DATABASE_ID = "e072f4c04bbf467793879e7dce4e4373"
 NOTION_VERSION = "2022-06-28"
 TEXT_LIMIT = 2000
 
-# 从 youtube-to-blog 或环境变量获取 API KEY
+# 从环境变量或 bots/shared/.env 获取专属归档 API KEY（与 youtube-to-blog 隔离）
 def get_notion_api_key() -> str:
-    key = os.getenv("NOTION_API_KEY", "")
+    key = os.getenv("NOTION_ARCHIVE_API_KEY", "").strip()
     if key:
         return key
-    env_path = Path("/Users/jialiwu/.gemini/config/skills/youtube-to-blog/.env")
+    env_path = Path(__file__).resolve().parent / ".env"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith("NOTION_API_KEY="):
-                return line.split("=", 1)[1].strip()
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("NOTION_ARCHIVE_API_KEY="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
     return ""
 
 
@@ -232,7 +235,7 @@ def archive_to_notion(
     """
     api_key = get_notion_api_key()
     if not api_key:
-        return False, "未找到有效的 NOTION_API_KEY"
+        return False, "未找到有效的 NOTION_ARCHIVE_API_KEY（请检查 bots/shared/.env）"
 
     if not date_str:
         date_str = datetime.now().strftime("%Y-%m-%d")
