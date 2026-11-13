@@ -66,6 +66,7 @@ _ALLOWED_TAGS = r"(?:b|strong|i|em|u|ins|s|strike|del|code|pre|a|tg-spoiler|bloc
 # 匹配白名单的开/闭标签（属性中不含尖括号，足以覆盖 <a href="...">）
 _TAG_RE = re.compile(rf"</?\s*{_ALLOWED_TAGS}(?:\s+[^<>]*?)?>", re.IGNORECASE)
 _SENTINEL_RE = re.compile("\x00(\\d+)\x00")
+_UNESCAPED_AMP_RE = re.compile(r"&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)")
 
 
 def sanitize_html(text: str) -> str:
@@ -80,8 +81,8 @@ def sanitize_html(text: str) -> str:
 
     # 1. 暂存白名单标签
     tmp = _TAG_RE.sub(_hold, text)
-    # 2. 转义剩余文本中的 & < >（保留引号）
-    tmp = html.escape(tmp, quote=False)
+    # 2. 转义剩余文本中的裸 & < >（保留已合法存在的 HTML 实体，避免 &amp; 被二次转义为 &amp;amp;）
+    tmp = _UNESCAPED_AMP_RE.sub("&amp;", tmp).replace("<", "&lt;").replace(">", "&gt;")
     # 3. 还原标签
     tmp = _SENTINEL_RE.sub(lambda m: stash[int(m.group(1))], tmp)
     return tmp
@@ -470,7 +471,13 @@ def html_to_lark_md(text: str) -> list:
     href 只认 http/https，其余（javascript: 之类）连同标签一起降级成纯文本。"""
     lines = []
     for line in (text or "").split("\n"):
-        # 预处理：修复 <b>1. <a href="...">...</a></b> 结构，避免 <b> 与 <a> 嵌套时 <b> 被剥除
+        # 预处理：修复 <b>1. <a href="...">repo</a></b> 结构，避免 <b> 与 <a> 嵌套时链接失去加粗
+        line = re.sub(
+            r"<b>(\d+\.)\s*(<a\s+[^>]+>)(?:<b>)?(.*?)(?:</b>)?</a>\s*</b>",
+            r"<b>\1</b> \2<b>\3</b></a>",
+            line,
+            flags=re.I,
+        )
         line = re.sub(r"<b>(\d+\.)\s*(<a\s+[^>]+>)", r"<b>\1</b> \2", line)
         buf, pos = [], 0
         for m in _A_RE.finditer(line):
@@ -496,13 +503,13 @@ def html_to_lark_md(text: str) -> list:
 
         # 关键防护 3：全局飞书排版美学与防断流引擎（解决大板块间隔、条目归属性与条目内紧凑提行）
         _SECTION_HEADERS = (
-            "🔥 今日领涨", "🔥 领涨",
+            "🔥 今日领涨", "🔥 领涨", "🔥 持续霸榜",
             "❄️ 今日领跌", "❄️ 领跌",
             "⚡ 焦点异动",
             "🔭 盘面核心叙事", "🔭 核心叙事",
             "🎯 决策仪表盘", "🎯 早盘决策仪表盘", "🎯 港股早盘决策仪表盘",
-            "⚡ 30秒速览",
-            "🚀 一、", "🔥 二、", "📰 二、", "▍",
+            "⚡ 30秒速览", "📋 30秒速览",
+            "🚀 一、", "🚀 二、", "🔥 一、", "🔥 二、", "📰 一、", "📰 二、", "▍",
             "⚡ 早盘三大", "⚡ 今早港股", "⚡ 本周 5 件事",
         )
         _HEADER_METRICS = (
@@ -520,18 +527,20 @@ def html_to_lark_md(text: str) -> list:
         _ITEM_INTERNAL_PREFIXES = (
             "🏷️", "🛠️", "Original:",
             "- **它是干嘛的", "- **个人 Build", "- **个人 build",
-            "- **这帖在聊啥", "- **评论区交锋",
-            "- **板块内领涨", "- **板块内领跌", "- **领涨原因", "- **领跌原因",
+            "- **这帖在聊啥", "- **评论区交锋", "- **评论区热议", "- **核心要点",
+            "- **板块内领涨", "- **板块内涨幅", "- **板块内领跌", "- **板块内跌幅",
+            "- **领涨原因", "- **领跌原因",
             "- **信号灯状态", "- **早盘信号灯", "- **👀", "- **🚨", "- **💡 分析师",
         )
         _BREAK_PREFIXES = (
-            "原帖：", "原推：", "**素材**：", "📎 **主流媒体", "📈 本周数字", "📄 The Details"
+            "原帖：", "原推：", "长文：", "**素材**：", "📎 **主流媒体", "📈 本周数字", "📄 The Details"
         )
 
         clean_curr = res_line.lstrip("*# ").strip()
+        clean_bullet_curr = res_line.lstrip("-•·*# \t").strip()
         curr_is_sec_header = any(clean_curr.startswith(h) for h in _SECTION_HEADERS)
         curr_is_metric = any(clean_curr.startswith(m.lstrip("*# ")) for m in _HEADER_METRICS)
-        curr_is_internal = any(clean_curr.startswith(p.lstrip("*-•· ")) for p in _ITEM_INTERNAL_PREFIXES)
+        curr_is_internal = any(clean_bullet_curr.startswith(p.lstrip("-•·*# \t")) for p in _ITEM_INTERNAL_PREFIXES)
 
         # 检查上一非空行是否为大标题或指标项
         prev_non_empty = ""
@@ -1055,9 +1064,9 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
           file=sys.stderr)
     duration = round(time.time() - t0, 1)
     write_log("OK",
-              f"Claude写稿 → {meta.get('log_summary', '')} → 飞书推送成功"
+              f"AI写稿 → {meta.get('log_summary', '')} → 飞书推送成功"
               f"（{sent} 条 / {len(report)}字 / {len(x_links)} 条{link_label}）",
               metrics={**meta.get("metrics", {}), "ai_calls": 0,
                        "duration_s": duration, "report_chars": len(report),
-                       "x_links": len(x_links), "source": "claude"})
+                       "x_links": len(x_links), "source": "antigravity"})
     return 0

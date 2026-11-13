@@ -31,6 +31,7 @@ PYTHON="${BOT_PYTHON:-/usr/bin/python3}"
 # Level 2 总开关：0=关（只发通知喊人工）  1=开（让 Claude CLI 无人值守改代码并重跑）。
 # 默认关；由 health plist 的 EnvironmentVariables 设 ENABLE_CLAUDE_REPAIR=1 打开。
 ENABLE_CLAUDE_REPAIR="${ENABLE_CLAUDE_REPAIR:-0}"
+ENABLE_HEADLESS_CATCHUP="${ENABLE_HEADLESS_CATCHUP:-0}"
 
 # 解析 claude CLI 绝对路径（launchd 的 PATH 极简，不能依赖裸 `claude`）。
 # 可用环境变量 CLAUDE_BIN 指定；否则在常见安装位置里探测。
@@ -106,7 +107,7 @@ log "错误：$ERROR"
 mark_changelog "/"          # 标记“修复中”
 
 if ! drafts_fresh; then
-    log "今日稿件缺失或过期（DRAFTS=${DRAFTS:-未配置}），重跑 send 无意义 → 跳过 L1/L2，直接转无头补跑"
+    log "今日稿件缺失或过期（DRAFTS=${DRAFTS:-未配置}），重跑 send 无意义（由 Antigravity Sidecar 负责唤醒重跑）"
 else
     # ── Level 1：瞬时错误，等 30s 重跑 ──────────────────────────────
     if is_transient; then
@@ -157,8 +158,8 @@ ${ERROR}
     fi
 fi
 
-# ── 最终兜底：无头补跑（完整重走 fetch → 写稿 → send）──────────
-if [ -f "$DIR/claude_catchup.sh" ]; then
+# ── 最终兜底：默认关闭无头 CLI 补跑（Option B），仅在显式开启时触发 ────
+if [ "$ENABLE_HEADLESS_CATCHUP" = "1" ] && [ -f "$DIR/claude_catchup.sh" ]; then
     log "最终兜底：触发无头补跑（claude_catchup.sh）..."
     if bash "$DIR/claude_catchup.sh" >>"$REPAIR_LOG" 2>&1; then
         log "✅ 无头补跑成功"

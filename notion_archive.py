@@ -15,6 +15,7 @@ Collection ID: e1052ed6-a74e-4029-9396-499280ad5f2d
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import os
 import re
@@ -54,10 +55,17 @@ def get_notion_api_key() -> str:
 INLINE_RE = re.compile(
     r"(?P<code>`[^`\n]+`)"
     r"|(?P<bold>\*\*.+?\*\*)"
-    r"|(?P<html_bold><b>.+?</b>)"
+    r"|(?P<html_bold><b>.*?</b>)"
     r"|(?P<link>\[[^\]\n]+\]\([^()\s]+\))"
-    r"|(?P<html_link><a\s+href=[\"'](?P<href>[^\"']+)[\"']>(?P<anchor>.*?)</a>)"
+    r"|(?P<html_link><a\s+[^>]*?href=[\"'](?P<href>[^\"']+)[\"'][^>]*>(?P<anchor>.*?)</a>)",
+    re.IGNORECASE,
 )
+
+_RESIDUAL_TAG_RE = re.compile(r"</?(?:b|strong|i|em|code|a)(?:\s+[^<>]*)?>", re.I)
+
+
+def _clean_text(s: str) -> str:
+    return html.unescape(_RESIDUAL_TAG_RE.sub("", s or ""))
 
 def _text_items(content: str, *, bold: bool = False, code: bool = False, link: str | None = None) -> list:
     items = []
@@ -78,41 +86,48 @@ def _text_items(content: str, *, bold: bool = False, code: bool = False, link: s
 
 def rich_text(text: str) -> list:
     """把行内 Markdown 与受控 HTML 转换为 Notion rich_text"""
+    # 预处理嵌套 <b>1. <a href="...">Title</a></b> → <b>1.</b> <a href="..."><b>Title</b></a>
+    text = re.sub(
+        r"<b>(\d+\.)\s*(<a\s+[^>]+>)(?:<b>)?(.*?)(?:</b>)?</a>\s*</b>",
+        r"<b>\1</b> \2<b>\3</b></a>",
+        text,
+        flags=re.I,
+    )
     parts = []
     pos = 0
     for m in INLINE_RE.finditer(text):
         if m.start() > pos:
-            parts += _text_items(text[pos : m.start()])
+            parts += _text_items(_clean_text(text[pos : m.start()]))
         kind = m.lastgroup
         raw = m.group()
         if kind == "code":
-            parts += _text_items(raw[1:-1], code=True)
+            parts += _text_items(html.unescape(raw[1:-1]), code=True)
         elif kind == "bold":
-            parts += _text_items(raw[2:-2], bold=True)
+            parts += _text_items(_clean_text(raw[2:-2]), bold=True)
         elif kind == "html_bold":
             inner = raw[3:-4]
-            parts += _text_items(inner, bold=True)
+            parts += _text_items(_clean_text(inner), bold=True)
         elif kind == "link":
             match = re.match(r"\[([^\]]+)\]\(([^)]+)\)", raw)
             if match:
                 label, url = match.groups()
-                parts += _text_items(label, link=url)
+                parts += _text_items(html.unescape(label), link=url)
         elif kind == "html_link":
-            href = m.group("href")
+            href = html.unescape(m.group("href"))
             anchor = m.group("anchor")
-            # 剥离内部标签
-            clean_anchor = re.sub(r"<[^>]+>", "", anchor)
-            parts += _text_items(clean_anchor or href, link=href)
+            is_bold = bool(re.search(r"<\s*(?:b|strong)\b", anchor, re.I))
+            clean_anchor = html.unescape(re.sub(r"<[^>]+>", "", anchor)).strip()
+            parts += _text_items(clean_anchor or href, bold=is_bold, link=href)
         pos = m.end()
     if pos < len(text):
-        parts += _text_items(text[pos:])
-    return parts or _text_items(text)
+        parts += _text_items(_clean_text(text[pos:]))
+    return parts or _text_items(_clean_text(text))
 
 
 def extract_summary(text: str) -> str:
     """从稿件中抽取 30 秒速览或核心要点"""
-    # 匹配 30秒速览 区块
-    m = re.search(r"(?:⚡\s*30秒速览|30秒速览)[\s\S]*?(?=\n\s*(?:[#🚀🔥📈🗽🤖🐦🛠️]|---)|\Z)", text)
+    # 匹配 30秒速览 区块（遇到 ⭐ 星级条目或大板块 emoji / 分割线即止）
+    m = re.search(r"(?:⚡\s*30秒速览|30秒速览)[\s\S]*?(?=\n\s*(?:[#🚀🔥❄️⚡🔭🎯📰📎📈🗽🤖🐦🛠️⭐]|---)|\Z)", text)
     if m:
         summary_block = m.group().strip()
         lines = [line.strip() for line in summary_block.splitlines() if line.strip()]
@@ -170,25 +185,17 @@ def convert_to_blocks(content: str) -> list[dict]:
             i += 1
             continue
 
-        # HTML 风格标题如 <b>🚀 一、...</b>
-        if (line.startswith("<b>🚀") or line.startswith("<b>🔥") or line.startswith("<b>一、") or line.startswith("<b>二、") or line.startswith("<b>三、")) and line.endswith("</b>"):
-            clean_title = re.sub(r"</?b>", "", line)
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": rich_text(clean_title)}
-            })
-            i += 1
-            continue
-
-        # 30 秒速览 Callout 灰框
-        if "30秒速览" in line or line.startswith("> ⚡") or line.startswith("<b>⚡ 30秒速览</b>"):
+        # 30 秒速览 Callout 灰框（须先于 heading 判定）
+        plain_no_b = re.sub(r"</?b>", "", line).strip()
+        if "30秒速览" in plain_no_b or line.startswith("> ⚡"):
             quote_lines = [line]
             i += 1
             while i < len(lines) and (lines[i].strip().startswith("-") or lines[i].strip().startswith("•") or lines[i].strip().startswith(">") or not lines[i].strip()):
                 if lines[i].strip():
                     quote_lines.append(lines[i].strip())
                 i += 1
+            while quote_lines and not quote_lines[-1]:
+                quote_lines.pop()
             full_quote = "\n\n".join(quote_lines)
             blocks.append({
                 "object": "block",
@@ -199,6 +206,30 @@ def convert_to_blocks(content: str) -> list[dict]:
                     "color": "gray_background"
                 }
             })
+            continue
+
+        # HTML 顶层主标题（日报/早报/收盘复盘总标题 → heading_1）
+        if re.match(
+            r"^(?:🌅\s*)?(?:📊\s*美股收盘|📋\s*(?:AI\s*产业日报|美股要闻)|🐙\s*GitHub|🔥\s*X\s*热点|🛠️?\s*AI\s*Builder|🇨🇳\s*A股(?:开盘前瞻|收盘复盘)|🇭🇰\s*港股(?:开盘前瞻|收盘复盘))",
+            plain_no_b,
+        ) and (line.startswith("<b>") and line.endswith("</b>") or line.startswith("📋")):
+            blocks.append({
+                "object": "block",
+                "type": "heading_1",
+                "heading_1": {"rich_text": rich_text(plain_no_b)}
+            })
+            i += 1
+            continue
+
+        # HTML 风格板块标题（🚀/🔥/❄️/⚡/🔭/🎯/📰/📎/一、/二、/三、 → heading_2）
+        _H2_PREFIXES = ("🚀", "🔥", "❄️", "⚡", "🔭", "🎯", "📰", "📎", "一、", "二、", "三、", "四、")
+        if line.startswith("<b>") and line.endswith("</b>") and line.count("<b>") == 1 and any(plain_no_b.startswith(p) for p in _H2_PREFIXES):
+            blocks.append({
+                "object": "block",
+                "type": "heading_2",
+                "heading_2": {"rich_text": rich_text(plain_no_b)}
+            })
+            i += 1
             continue
 
         # 列表条目
@@ -287,14 +318,39 @@ def archive_to_notion(
     }
 
     try:
-        session = requests.Session()
-        session.trust_env = False  # Notion API 直连可达，绕过坏掉的本地 HTTP 代理环境变量
+        # 使用 bot_utils.resolve_proxy 探测可用代理（兼容系统 Python LibreSSL 直连偶发 EOF 问题）
+        shared_dir = str(Path(__file__).resolve().parent)
+        if shared_dir not in sys.path:
+            sys.path.insert(0, shared_dir)
+        from bot_utils import resolve_proxy
+
+        configured_proxy = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or "http://127.0.0.1:1082"
+        resolved_proxy, _ = resolve_proxy(configured_proxy)
+
+        def _make_session(proxy_url: str | None) -> requests.Session:
+            s = requests.Session()
+            s.trust_env = False
+            s.proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
+            return s
+
+        session = _make_session(resolved_proxy if resolved_proxy else None)
+
+        def _req_with_fallback(method: str, url: str, **kwargs):
+            nonlocal session
+            try:
+                return session.request(method, url, **kwargs)
+            except requests.RequestException:
+                # 若代理失败尝试直连，若直连失败尝试 1082 代理
+                alt = None if session.proxies else "http://127.0.0.1:1082"
+                session = _make_session(alt)
+                return session.request(method, url, **kwargs)
 
         last_err = None
         resp = None
         for attempt in range(3):
             try:
-                resp = session.post(
+                resp = _req_with_fallback(
+                    "POST",
                     "https://api.notion.com/v1/pages",
                     json=payload,
                     headers=headers,
@@ -320,7 +376,8 @@ def archive_to_notion(
         if len(blocks) > 90 and page_id:
             for j in range(90, len(blocks), 90):
                 chunk = blocks[j : j + 90]
-                append_resp = session.patch(
+                append_resp = _req_with_fallback(
+                    "PATCH",
                     f"https://api.notion.com/v1/blocks/{page_id}/children",
                     json={"children": chunk},
                     headers=headers,
@@ -340,7 +397,7 @@ def main():
     parser.add_argument("--source", required=True, help="信源名称，如 '🐙 GitHub & HN', '🗽 美股与加密' 等")
     parser.add_argument("--draft", required=True, help="稿件文本路径")
     parser.add_argument("--date", default=None, help="日期 YYYY-MM-DD，缺省为当天")
-    parser.add_argument("--type", default="日报", choices=["日报", "周盘点"], help="类型")
+    parser.add_argument("--type", default="日报", choices=["日报", "周盘点", "开盘前瞻", "收盘复盘"], help="类型")
     parser.add_argument("--title", default=None, help="自定义标题")
     args = parser.parse_args()
 

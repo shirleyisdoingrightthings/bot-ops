@@ -50,6 +50,8 @@ HOUR=$(date '+%H'); HOUR=${HOUR#0}; HOUR=${HOUR:-0}
 # 窗口外只通知、不补跑。10:00 的 routine + 11:00 的定时体检都落在窗口内。
 CATCHUP_FROM=${CATCHUP_FROM:-11}
 CATCHUP_UNTIL=${CATCHUP_UNTIL:-20}
+# Option B：默认关闭 launchd 无头补跑，缺跑由 Antigravity Sidecar 唤醒自动接管
+ENABLE_HEADLESS_CATCHUP=${ENABLE_HEADLESS_CATCHUP:-0}
 # 缺跑回看天数：只用来"告诉你哪几天彻底没跑"，不触发任何补救动作，也不推送告警
 MISSED_LOOKBACK=${MISSED_LOOKBACK:-7}
 
@@ -154,22 +156,23 @@ if [ "$STATUS" = "FAIL" ]; then
     # 前台执行：launchd 在 job 主进程退出时会回收整个进程组，
     # 用 `&` 起的后台子进程会被立即杀掉（2026-07-23 修复）
     bash "$DIR/auto_repair.sh" "$ERR"
-    exit 2
+    rc=$?
+    exit "$rc"
 
 elif [ "$STATUS" = "MISSING" ]; then
-    # 等待 60s 后仍无记录：10:00 routine 今天未运行（机器睡眠 / App 未开等）
-    # → 触发无头补跑（自动版 Run Now），由 claude CLI 完整重走 fetch → 写稿 → send
     if [ "$HOUR" -lt "$CATCHUP_FROM" ] || [ "$HOUR" -ge "$CATCHUP_UNTIL" ]; then
-        # 窗口外（多半是 RunAtLoad 在清早或深夜触发的这一次）：不补跑，只留一行记录。
-        # 清早不补是因为 10:00 的 routine 还没轮到；深夜不补是因为稿子已经没人看。
-        echo "[health_check] 今天（$TODAY）无运行记录，但当前 ${HOUR} 点不在补跑窗口 ${CATCHUP_FROM}-${CATCHUP_UNTIL} 点内，跳过补跑"
+        echo "[health_check] 今天（$TODAY）无运行记录，但当前 ${HOUR} 点不在检查窗口 ${CATCHUP_FROM}-${CATCHUP_UNTIL} 点内，跳过告警"
         exit 0
     fi
-    notify WARN "今天主脚本未运行，已触发无头补跑"
-    echo "[health_check] WARN: 今天（$TODAY）无任何运行记录，触发无头补跑..."
-    # 前台执行，理由同 auto_repair 分支（launchd 进程组回收）
-    bash "$DIR/claude_catchup.sh"
-    exit 1
+    if [ "$ENABLE_HEADLESS_CATCHUP" = "1" ] && [ -x "$DIR/claude_catchup.sh" ]; then
+        notify WARN "今天主脚本未运行，已触发无头补跑"
+        echo "[health_check] WARN: 今天（$TODAY）无任何运行记录，触发无头补跑..."
+        bash "$DIR/claude_catchup.sh"
+        exit 1
+    fi
+    notify WARN "今天主脚本尚无运行记录（已交由 Antigravity Sidecar 唤醒补跑，launchd 不再拉起无头 CLI）"
+    echo "[health_check] WARN: 今天（$TODAY）无运行记录，等待 Antigravity Sidecar 自动补跑"
+    exit 0
 fi
 
 if [ "$STATUS" = "NO_NEWS" ]; then

@@ -19,10 +19,10 @@ set -u
 
 BOTS_DIR="/Users/jialiwu/.gemini/bots"
 
-# ⚠️ 顺序即语义，不要调换。
+# ⚠️ 2026-11 调整：x-hotspot-bot 已移至次早 08:30 独立运行（x-hotspot-morning），
+#   下午 16:00 体检链只串行检查 AI Daily News Bot 与 ai-builder-bot（顺序即语义）。
 CHAIN=(
     "AI Daily News Bot"
-    "x-hotspot-bot"
     "ai-builder-bot"
 )
 

@@ -6,10 +6,10 @@ description: 每周二至周六早 10:00 写稿并推送《美股收盘 & 加密
 目标：美股收盘日报（已内嵌 24h 加密核心币价与情绪指标）由本任务在每周二至周六早 10:00（对应美股周一至周五收盘）亲自写稿并推送——抓取 → 按各自 prompt 写稿 → 发送。本任务是该机器人的唯一写稿入口。
 
 ⚠️ **重要变更说明：**
-1. **2026-11 起独立 Crypto 日报已退役并合并：** 加密货币不再抓取新闻，仅保留核心币价（BTC / ETH / SOL / BNB / XRP / HYPE）、全球加密市值、BTC 市占率与恐惧贪婪指数，并已直接内嵌到 `us stock bot` 的消息①（收盘仪表盘）中。**不要再去运行 `crypto daily bot` 目录下的任何脚本。**
-2. **AI 日报不在此任务：** AI 日报三块（产业日报 / X 热点 / AI Builder）在下午 15:00 的 `ai-daily-afternoon` 任务运行，**本任务不要去碰那三个 bot**。
+1. **2026-11 起独立 Crypto 日报已退役并合并：** 加密货币不再抓取新闻，仅保留核心币价（BTC / ETH / SOL / BNB / XRP / HYPE）、全球加密市值、BTC 市占率与恐惧贪婪指数，并已直接内嵌到 `us stock bot` 的消息①（收盘仪表盘）中。**独立 `crypto daily bot` 已下线归档，切勿再去运行。**
+2. **其他时段调度不在此任务：** `x-hotspot-morning` 在早 08:30、`cn-hk-*` 在工作日 09:00/16:15、`github-hn-morning` 在早 09:30、`ai-daily-afternoon` 在下午 15:00 运行，**本任务只跑 `us stock bot`**。
 
-**时间线**：每周二至周六 10:00 触发（主力）→ 11:00 `com.shirley.us-stock-bot-health` 体检；`[FAIL]` 派 auto_repair 自愈，当天无记录则派 `claude_catchup.sh` 无头补跑。
+**时间线**：每周二至周六 10:00 触发（主力）→ 11:00 `com.shirley.us-stock-bot-health` 执行轻量化健康检查（方案 B：不再拉起无头 CLI；仅当本地草稿已生成且新鲜 `drafts_fresh` 时执行 Level 1 非 AI 重发；关机/休眠错过 10:00 时由 Antigravity Sidecar 开机唤醒补跑）。
 
 工作根目录是 `/Users/jialiwu/.gemini/bots`，共享层在 `/Users/jialiwu/.gemini/bots/shared/`。
 
@@ -23,7 +23,7 @@ description: 每周二至周六早 10:00 写稿并推送《美股收盘 & 加密
 本 bot 播报的是**最近一个已收盘的美股交易日**（附带 24h 加密核心行情），不是"今天"。北京时间周日与周一没有新的收盘场次（美股假期同理），脚本会自行跳过。
 
 ### 步骤 1 — 抓取
-执行命令（若沙箱拦截本地代理 `127.0.0.1:12450`，请使用 `BypassSandbox: true`）：
+执行命令（若沙箱拦截本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 ```
@@ -41,12 +41,19 @@ bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 ### 步骤 2 — 写两稿
 消息①（美股收盘 & 加密行情仪表盘）：
 1. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/us stock bot/prompt_market.md`。
-2. 严格按其规则，结合 context 里的美股行情、24h 加密核心行情与新闻，写出《美股收盘 & 加密行情复盘》。各核心指标、板块细项与决策仪表盘字段必须以空行断开独立占行，严禁挤在同一行。
+2. 严格按其规则，结合 context 里的美股行情、24h 加密核心行情与新闻，写出《美股收盘 & 加密行情复盘》：
+   - `10年期美债` 按收益率 + bp 涨跌展示（如 `5.14% (+3.4bp)`），不要写相对百分比；
+   - 普跌日领涨板块自动标注为 `🔥 领涨/抗跌 Top 3 板块`；
+   - 板块或个股无新闻对应时明确写 `未见明确催化`（补一句技术/资金面说明 ≤ 20 字）；
+   - 各核心指标、板块细项与决策仪表盘字段必须按规范分行/空行，严禁挤在同一行。
 3. 使用 `write_file`（`Overwrite: true`）写入 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_market.txt`。
 
 消息②（美股要闻播报）：
 4. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/us stock bot/prompt_news.md`。
-5. 严格按其规则写出《美股要闻》。开头的「⚡ 30秒速览」为独立小标题，下方空一行后接 5 条无序列表内容（每行均以「- 」开头分行排列，严禁与标题粘在同一行，严禁写成单段连续文本），彻底去掉所有星星（无 ⭐）、每条 ≤55 字且必须含具体数字或专有名词、与正文前 5 条一一对应。正文条目必须严格按照最高优先级向最低优先级倒序排列（5星至3星），The Details 严禁使用 bullet points，必须采用单个连贯完整的高密度叙事段落，格式与《AI 产业日报》保持 100% 镜像一致。
+5. 严格按其规则写出《美股要闻》：
+   - 标题用 `<b>📋 美股要闻 · [收盘交易日]</b>` 与 `<b>⚡ 30秒速览</b>`；
+   - 「⚡ 30秒速览」下方空一行后接 5 条以「- 」开头的无序列表（彻底去掉 ⭐、每条 ≤55 字且含具体数字/专名、与正文前 5 条一一对应）；
+   - 正文严格按 5星至3星倒序，**最多入选 12 条**（按 5分 > 4分 > 3分 截断），`📄 The Details：` 后必须采用单个连贯高密度叙事段落（严禁 bullet，严禁叙事段落内部使用冒号），格式与《AI 产业日报》保持 100% 镜像一致。
 6. 使用 `write_file`（`Overwrite: true`）写入 `/Users/jialiwu/.gemini/bots/us stock bot/logs/report_news.txt`。
 
 两稿硬约束：日期一律用 context 里的【收盘交易日】，不要用今天的日期；消息①只用 `<b>` 加粗，不用 markdown `**`；消息②只用 `<b>` 和 `<a href>`；英文原标题不翻译。
@@ -65,7 +72,7 @@ bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" send
 
 用中文简要汇报：
 
-```
+```text
 美股收盘 & 加密行情日报：{状态}
 ```
 
