@@ -19,7 +19,9 @@ import html
 import json
 import os
 import re
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import urllib.error
@@ -126,18 +128,27 @@ def rich_text(text: str) -> list:
 
 def extract_summary(text: str) -> str:
     """从稿件中抽取 30 秒速览或核心要点"""
-    # 匹配 30秒速览 区块（遇到 ⭐ 星级条目或大板块 emoji / 分割线即止）
-    m = re.search(r"(?:⚡\s*30秒速览|30秒速览)[\s\S]*?(?=\n\s*(?:[#🚀🔥❄️⚡🔭🎯📰📎📈🗽🤖🐦🛠️⭐]|---)|\Z)", text)
+    # 匹配 30秒速览 区块（兼容带 <b> 包裹的章节标题，遇到 ⭐ 星级条目或大板块 emoji / 分割线即止）
+    m = re.search(
+        r"(?:⚡\s*30秒速览|30秒速览)[\s\S]*?(?=\n\s*(?:<(?:b|strong)\b[^>]*>\s*)*(?:[#🚀🔥❄️⚡🔭🎯📰📎📈🗽🤖🐦🛠️⭐]|---)|\Z)",
+        text,
+        re.IGNORECASE,
+    )
     if m:
         summary_block = m.group().strip()
         lines = [line.strip() for line in summary_block.splitlines() if line.strip()]
-        # 过滤掉标题行
-        content_lines = [l.lstrip("-*•> ").strip() for l in lines if not re.search(r"30秒速览", l)]
+        # 过滤掉标题行，剥离残留 HTML 标签后截断，避免 [:500] 截断半个 <a href> 标签
+        content_lines = [
+            html.unescape(re.sub(r"<[^>]+>", "", l)).lstrip("-*•> ").strip()
+            for l in lines
+            if not re.search(r"30秒速览", l)
+        ]
+        content_lines = [l for l in content_lines if l]
         if content_lines:
             combined = "；".join(content_lines)
             return combined[:500]
     # 兜底：取前 300 字符纯文本
-    clean = re.sub(r"<[^>]+>", "", text).strip()
+    clean = html.unescape(re.sub(r"<[^>]+>", "", text)).strip()
     return clean[:300].replace("\n", " ")
 
 
@@ -333,17 +344,85 @@ def archive_to_notion(
             s.proxies = {"http": proxy_url, "https": proxy_url} if proxy_url else {}
             return s
 
+        class _CurlResp:
+            def __init__(self, status_code: int, text: str):
+                self.status_code = status_code
+                self.text = text
+
+            def json(self):
+                return json.loads(self.text)
+
+        def _curl_request(method: str, url: str, body_dict: dict, timeout: int = 35):
+            """LibreSSL 2.8.3 等系统 Python 对 Notion TLS 偶发 EOF 时，回退系统 /usr/bin/curl。"""
+            # 优先使用已探测到的可用代理；若已选直连或代理临时失败，顺次尝试 1082 与直连
+            candidates: list[str | None] = []
+            for p in (resolved_proxy if resolved_proxy else None, configured_proxy, "http://127.0.0.1:1082", None):
+                if p == "":
+                    p = None
+                if p not in candidates:
+                    candidates.append(p)
+
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as tf:
+                    json.dump(body_dict, tf, ensure_ascii=False)
+                    tmp_path = tf.name
+
+                last_exc = None
+                for px in candidates:
+                    cmd = ["/usr/bin/curl", "-sS", "--max-time", str(timeout)]
+                    if px:
+                        cmd += ["-x", px]
+                    cmd += [
+                        "-X", method, url,
+                        "-H", f"Notion-Version: {NOTION_VERSION}",
+                        "-H", "Content-Type: application/json",
+                        "-K", "-",
+                        "--data-binary", f"@{tmp_path}",
+                        "-w", "\n%{http_code}",
+                    ]
+                    r = subprocess.run(
+                        cmd,
+                        input=f'header = "Authorization: Bearer {api_key}"\n',
+                        text=True,
+                        capture_output=True,
+                    )
+                    if r.returncode != 0:
+                        last_exc = RuntimeError(f"curl exit {r.returncode}: {r.stderr.strip()}")
+                        continue
+                    body, _, code_str = r.stdout.rpartition("\n")
+                    try:
+                        status_code = int(code_str.strip())
+                    except ValueError:
+                        last_exc = RuntimeError(f"curl bad status output: {r.stdout[-120:]}")
+                        continue
+                    return _CurlResp(status_code, body)
+                raise last_exc or RuntimeError("curl fallback failed")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+
         session = _make_session(resolved_proxy if resolved_proxy else None)
+        prefer_curl = False
 
         def _req_with_fallback(method: str, url: str, **kwargs):
-            nonlocal session
+            nonlocal session, prefer_curl
+            body_dict = kwargs.get("json")
+            if prefer_curl and body_dict is not None:
+                return _curl_request(method, url, body_dict, timeout=int(kwargs.get("timeout", 30)))
             try:
                 return session.request(method, url, **kwargs)
             except requests.RequestException:
-                # 若代理失败尝试直连，若直连失败尝试 1082 代理
-                alt = None if session.proxies else "http://127.0.0.1:1082"
-                session = _make_session(alt)
-                return session.request(method, url, **kwargs)
+                # 先尝试 requests 切换直连/1082；若仍因 LibreSSL 2.8.3 TLS EOF 失败，永久切至系统 curl
+                try:
+                    alt = None if session.proxies else "http://127.0.0.1:1082"
+                    session = _make_session(alt)
+                    return session.request(method, url, **kwargs)
+                except requests.RequestException:
+                    if body_dict is not None and os.path.exists("/usr/bin/curl"):
+                        prefer_curl = True
+                        return _curl_request(method, url, body_dict, timeout=int(kwargs.get("timeout", 30)))
+                    raise
 
         last_err = None
         resp = None
