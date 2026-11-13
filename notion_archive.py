@@ -22,6 +22,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+import requests
 from datetime import datetime
 from pathlib import Path
 
@@ -286,34 +287,50 @@ def archive_to_notion(
     }
 
     try:
-        req = urllib.request.Request(
-            "https://api.notion.com/v1/pages",
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-            page_id = data.get("id")
-            page_url = data.get("url", f"https://notion.so/{page_id.replace('-', '')}")
+        session = requests.Session()
+        session.trust_env = False  # Notion API 直连可达，绕过坏掉的本地 HTTP 代理环境变量
+
+        last_err = None
+        resp = None
+        for attempt in range(3):
+            try:
+                resp = session.post(
+                    "https://api.notion.com/v1/pages",
+                    json=payload,
+                    headers=headers,
+                    timeout=30,
+                )
+                if resp.status_code < 500:
+                    break
+            except Exception as e:
+                last_err = e
+                time.sleep(1)
+
+        if resp is None:
+            return False, f"Notion 同步异常（重试3次均失败）: {last_err}"
+
+        if resp.status_code >= 400:
+            return False, f"Notion API HTTP {resp.status_code}: {resp.text}"
+
+        data = resp.json()
+        page_id = data.get("id")
+        page_url = data.get("url", f"https://notion.so/{page_id.replace('-', '')}")
 
         # 追加剩余 blocks
         if len(blocks) > 90 and page_id:
             for j in range(90, len(blocks), 90):
                 chunk = blocks[j : j + 90]
-                append_req = urllib.request.Request(
+                append_resp = session.patch(
                     f"https://api.notion.com/v1/blocks/{page_id}/children",
-                    data=json.dumps({"children": chunk}, ensure_ascii=False).encode("utf-8"),
+                    json={"children": chunk},
                     headers=headers,
-                    method="PATCH",
+                    timeout=30,
                 )
-                with urllib.request.urlopen(append_req, timeout=30):
-                    time.sleep(0.3)
+                if append_resp.status_code >= 400:
+                    print(f"  [WARN] 追加 blocks 失败: {append_resp.text}", file=sys.stderr)
+                time.sleep(0.3)
 
         return True, page_url
-    except urllib.error.HTTPError as e:
-        err_msg = e.read().decode("utf-8", errors="ignore")
-        return False, f"Notion API HTTP {e.code}: {err_msg}"
     except Exception as e:
         return False, f"Notion 同步异常: {str(e)}"
 
