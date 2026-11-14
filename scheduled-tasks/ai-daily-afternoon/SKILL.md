@@ -43,7 +43,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
    - 仅使用 `<b>` 和 `<a href>` 标签，严禁使用 Markdown `**`；
    - 标题使用 `<b>📋 AI 产业日报 · [今天日期]</b>` 与 `<b>⚡ 30秒速览</b>`；
    - 「⚡ 30秒速览」下方空一行后接 5 条以「- 」开头的无序列表（无 ⭐、每条 ≤55 字且含具体数字/专名、与正文前 5 条一一对应）；
-   - 正文严格按 5星至3星倒序，**最多入选 12 条**（按 5分 > 4分 > 3分 截断），英文原标题不翻译，`📄 The Details：` 后紧接单段高密度连贯叙事（禁止 bullet，禁止叙事段落内部使用冒号）；
+   - 正文严格按 5星至3星倒序，**最多入选 12 条**（按 5分 > 4分 > 3分 截断），英文原标题不翻译，每条严格按 `标题 (<a href="..."><b>...</b></a>) → [星级] [标签] → 📄 The Details：` 顺序排版，`📄 The Details：` 后紧接单段高密度连贯叙事（禁止 bullet，禁止叙事段落内部使用冒号）；
    - 必须使用 context 里的「今天日期」。
 3. 使用 `write_file`（`Overwrite: true`）将纯正文写入 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`。
 
@@ -79,7 +79,7 @@ bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" fetch
 ### 步骤 2 — 写稿
 1. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/ai-builder-bot/prompt.md`。
 2. 严格按其全部规则写出完整《AI Builder 日报》：
-   - 每条话题至少带一条从素材 `[原推]` 字段原样复制的 `x.com/<user>/status/<id>` 直链；若引用 builder 个人技术长文，附 `长文：<a href="{博客直链}">{作者/博客}：《{标题}》</a>`（注意 `send` 仍要求全文至少包含 1 条 `x.com` 原推链接）；
+   - 正文中提到的每一家机构、研究者或 `@handle` 只要素材给出对应链接，必须在正文点名处直接加 `<a href="URL">...</a>` 超链接；每条话题末尾另保留 `[原推]` / `[长文]` 汇总直链（`send` 仍要求全文至少包含 1 条 `x.com` 原推链接）；
    - 赞/转/回是 X 上真实互动量，可照实写；
    - 开头第一行写明这批推文的实际日期；文末数据注脚标明覆盖条数（含博客长文数时写 `+ {N} 篇长文`）；
    - 只用 `<b>` 和 `<a href>` 标签；英文人名、handle、公司名、模型名不翻译。

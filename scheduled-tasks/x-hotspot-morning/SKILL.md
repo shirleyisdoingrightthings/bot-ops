@@ -15,9 +15,9 @@ description: 每天早 08:30 抓取过去 48 小时 Latent Space AINews（Twitte
 ⚠️ **三条工具与排版铁律：**
 1. **防截断**：执行 `fetch` 后，完整输出已自动落盘到 `/Users/jialiwu/.gemini/bots/x-hotspot-bot/logs/last_context.txt`。请直接使用 `read_file` 读取 `logs/last_context.txt`，严禁重复执行 `fetch`。
 2. **防 `$` 变量吞字**：写稿落盘时，必须使用 `write_file`（`Overwrite: true`）写入 `/Users/jialiwu/.gemini/bots/x-hotspot-bot/logs/report_draft.txt`，严禁使用 `cat <<EOF` 或 `echo`。
-3. **只挂单条最高引用原帖直链**：
-   - 每条话题末尾**只选被引用次数最多的那 1 条 `x.com/<user>/status/<id>` 原帖直链贴出**，格式：`原帖：<a href="{x.com 直链}">@{handle}</a>（当天复盘被引用 {N} 次）`；
-   - **禁止堆砌多条原帖链接**；其余代表人物只写 `@handle` 与核心观点；
+3. **正文人物/机构行内加链接 + 末尾单条主原帖直链**：
+   - 正文中所有提到且素材给出明确链接的**机构、评测方、研究者、开发者或 `@handle`**（如 `Artificial Analysis`、`@skalskip92`、`@simonw` 等），必须随文直接使用 `<a href="URL">名字/@handle</a>` 超链接（严禁只放文末而正文留空无链接）；
+   - 每条话题末尾的 `原帖：` 行**仍只选被引用次数最多的那 1 条 `x.com/<user>/status/<id>` 原帖直链**，格式：`原帖：<a href="{x.com 直链}">@{handle}</a>（当天复盘被引用 {N} 次）`，不堆砌多条末尾原帖；
    - **禁止把「被引用 N 次」写成「点赞数 / 最高赞」**，那是 AINews 当天复盘里的引用中心度；
    - 正文仅使用 `<b>` 和 `<a href>` 标签，严禁使用 Markdown `**`。
 
