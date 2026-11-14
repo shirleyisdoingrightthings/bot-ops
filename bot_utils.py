@@ -998,9 +998,81 @@ def emit_fetch_output(lines, save_to=None) -> str:
 # 只服务「一条消息 + 必须带原帖直链」这一种形态。crypto/美股/AI 日报是多条消息、
 # 没有原帖闸门，不要硬套过来。
 
+def extract_report_date(report_text: str, default: str | None = None) -> str | None:
+    """从稿件标题/开头提取 YYYY-MM-DD 业务日期（跳过 AI Builder 正文 UTC 范围行）"""
+    if not report_text:
+        return default
+    non_empty = [line.strip() for line in report_text.splitlines() if line.strip()]
+    date_re = re.compile(
+        r"(?P<y1>(?<!\d)\d{4})-(?P<m1>\d{1,2})-(?P<d1>\d{1,2})(?!\d)"
+        r"|(?P<y2>\d{4})年(?P<m2>\d{1,2})月(?P<d2>\d{1,2})日"
+    )
+    for idx, raw_line in enumerate(non_empty[:3]):
+        plain = html.unescape(re.sub(r"<[^>]+>", "", raw_line)).strip()
+        if idx > 0 and plain.startswith("这批推文"):
+            continue
+        for m in date_re.finditer(plain):
+            y = int(m.group("y1") or m.group("y2"))
+            mo = int(m.group("m1") or m.group("m2"))
+            d = int(m.group("d1") or m.group("d2"))
+            try:
+                return datetime(y, mo, d).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+    return default
+
+
+def archive_and_sync_notion(
+    report_text: str,
+    source: str,
+    *,
+    date_str: str,
+    archive_dir: Path | None = None,
+    archive_filename: str | None = None,
+    report_type: str = "日报",
+    title_override: str | None = None,
+) -> dict:
+    """落盘本地归档并同步至 Notion 数据库，返回可合入 run.jsonl 的状态指标。"""
+    if archive_dir is not None:
+        try:
+            adir = Path(archive_dir)
+            adir.mkdir(parents=True, exist_ok=True)
+            fname = archive_filename or f"{date_str}.txt"
+            (adir / fname).write_text(report_text, encoding="utf-8")
+        except Exception as e:
+            print(f"  [WARN] 本地归档写入失败: {e}", file=sys.stderr)
+
+    try:
+        from notion_archive import archive_to_notion
+        ok, res = archive_to_notion(
+            report_text,
+            source,
+            date_str=date_str,
+            report_type=report_type,
+            title_override=title_override,
+        )
+        if ok:
+            print(f"  ✓ 已同步归档至 Notion: {res}", file=sys.stderr)
+        else:
+            print(f"  [WARN] Notion 归档未完成: {res}", file=sys.stderr)
+    except Exception as e:
+        ok, res = False, str(e)
+        print(f"  [WARN] Notion 归档调用失败: {e}", file=sys.stderr)
+
+    meta = {
+        "notion_ok": bool(ok),
+        "notion_url": res if ok else "",
+        "notion_date": date_str,
+    }
+    if not ok:
+        meta["notion_err"] = str(res)[:200]
+    return meta
+
+
 def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_urls,
                          webhook, write_log, save_pending,
-                         link_label: str = "原帖") -> int:
+                         link_label: str = "原帖",
+                         date_str: str | None = None) -> int:
     """读取 Claude 写好的单份稿件 → 原帖闸门 → 推飞书 → 归档去重 → 写日志。
 
     link_label 只影响日志与 stderr 的措辞（x-hotspot 说「原帖」、builder 说「原推」），
@@ -1038,22 +1110,28 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
     print(f"  ✓ 推送成功（{sent} 条）", file=sys.stderr)
     Path(cache_file).unlink(missing_ok=True)
 
-    # 自动同步归档到 Notion「每日情报归档与决策看板」数据库
-    try:
-        from notion_archive import archive_to_notion
-        source_name = "🐦 X 热点播报" if link_label == "原帖" else "🛠️ AI Builder"
-        ok, res = archive_to_notion(report, source_name)
-        if ok:
-            print(f"  ✓ 已同步归档至 Notion: {res}", file=sys.stderr)
-        else:
-            print(f"  [WARN] Notion 归档未完成: {res}", file=sys.stderr)
-    except Exception as e:
-        print(f"  [WARN] Notion 归档调用失败: {e}", file=sys.stderr)
-
     try:
         meta = json.loads(Path(fetch_meta).read_text(encoding="utf-8"))
     except Exception:
         meta = {"log_summary": "", "metrics": {}}
+
+    doc_date = (
+        date_str
+        or extract_report_date(report)
+        or meta.get("fetch_date")
+        or datetime.now().strftime("%Y-%m-%d")
+    )
+
+    # 自动同步归档到 Notion「每日情报归档与决策看板」数据库，并保留本地日期归档
+    source_name = "🐦 X 热点播报" if link_label == "原帖" else "🛠️ AI Builder"
+    notion_meta = archive_and_sync_notion(
+        report,
+        source_name,
+        date_str=doc_date,
+        archive_dir=draft_path.parent / "archive",
+        archive_filename=f"{doc_date}.txt",
+    )
+    notion_tag = " | Notion ✓" if notion_meta.get("notion_ok") else " | Notion ⚠️"
 
     # 把 x.com 原帖以及 fetch_meta 记录的主源期刊链接（issue_urls，如 AINews 期次 URL）
     # 一并记入去重档案，确保同一期 AINews 不会被跨天重复播报。
@@ -1065,8 +1143,8 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
     duration = round(time.time() - t0, 1)
     write_log("OK",
               f"AI写稿 → {meta.get('log_summary', '')} → 飞书推送成功"
-              f"（{sent} 条 / {len(report)}字 / {len(x_links)} 条{link_label}）",
-              metrics={**meta.get("metrics", {}), "ai_calls": 0,
+              f"（{sent} 条 / {len(report)}字 / {len(x_links)} 条{link_label}）{notion_tag}",
+              metrics={**meta.get("metrics", {}), **notion_meta, "ai_calls": 0,
                        "duration_s": duration, "report_chars": len(report),
                        "x_links": len(x_links), "source": "antigravity"})
     return 0

@@ -187,6 +187,37 @@ if declare -F content_check >/dev/null; then
     content_check
 fi
 
+# ── 4.5 Notion 同步状态核查（只在存在 notion_ok=false 时告警，不触发补跑）──
+if [ -f "$JSONL" ]; then
+    NOTION_ERR=$(/usr/bin/python3 -c "
+import sys, json
+jsonl_path, today = sys.argv[1], sys.argv[2]
+failed_by_sess = {}
+with open(jsonl_path, encoding='utf-8') as f:
+    for line in f:
+        line = line.strip()
+        if not line or today not in line:
+            continue
+        try:
+            d = json.loads(line)
+            if not d.get('ts', '').startswith(today):
+                continue
+            if d.get('status') == 'OK' and ('notion_ok' in d):
+                sess = str(d.get('session') or '')
+                if d.get('notion_ok') is False:
+                    failed_by_sess[sess] = str(d.get('notion_err') or 'unknown')[:120]
+                elif d.get('notion_ok') is True:
+                    failed_by_sess.pop(sess, None)
+        except Exception:
+            pass
+if failed_by_sess:
+    print(list(failed_by_sess.values())[-1])
+" "$JSONL" "$TODAY" 2>/dev/null)
+    if [ -n "$NOTION_ERR" ]; then
+        notify WARN "notion_ok=False ($NOTION_ERR) — Notion 归档失败（Feishu 已推送），请运行 /usr/bin/python3 /Users/jialiwu/.gemini/bots/shared/notion_reconcile.py 补同步"
+    fi
+fi
+
 # ── 5. 分源监控：读取 fetch 阶段算好的"连续零产"结论 ──────────────
 # 连续天数由各 *_report.py 的 fetch 单点维护（logs/.zero_streak.json），
 # 这里只读不写——两处各加一次会让天数翻倍。
