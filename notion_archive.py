@@ -344,16 +344,32 @@ def _is_news_headline_line(line: str) -> bool:
     s = line.strip()
     if not s:
         return False
-    plain = _strip_tags_plain(s)
+    s_no_hash = re.sub(r"^#{1,3}\s*", "", s).strip()
+    plain = re.sub(r"^#{1,3}\s*", "", _strip_tags_plain(s)).strip()
     if not plain or len(plain) > 120:
         return False
     if plain.startswith(("⭐", "📄", "⚡", "📋", "📊", "🌅", "🇨🇳", "🇭🇰", "🐙", "🔥", "❄️", "🔭", "🎯", "📎", "🚀", "📰", "🧭", "📐", "📈", "💰", "🌡", "🪙", "🇺🇸", "🌍", "·", "•", "-", "30秒速览")):
         return False
-    if re.search(r"<a\s+[^>]*href=", s, re.I) or re.match(r"^(?:\*\*)?\[[^\]]+\]\([^)]+\)(?:\*\*)?$", s):
+    if s.startswith("## "):
         return True
-    if s.startswith(("<b>", "**")) and ("。" not in plain or len(plain) <= 45):
+    if re.search(r"<a\s+[^>]*href=", s_no_hash, re.I) or re.match(r"^(?:\*\*)?\[[^\]]+\]\([^)]+\)(?:\*\*)?$", s_no_hash):
+        return True
+    if s_no_hash.startswith(("<b>", "**")) and ("。" not in plain or len(plain) <= 45):
         return True
     return False
+
+
+def _is_x_builder_topic_heading(line: str, plain_no_b: str) -> bool:
+    """判断在 X 热点播报 / AI Builder 中该行是否为分节标题（转为 heading_2）"""
+    plain_clean = re.sub(r"^#{1,3}\s*", "", plain_no_b).strip()
+    if not re.match(r"^\d+\.\s+\S", plain_clean) or len(plain_clean) > 100:
+        return False
+    if line.startswith(("# ", "## ", "### ")):
+        return True
+    line_no_a = re.sub(r"</?a\b[^>]*>", "", line, flags=re.I).strip()
+    stripped_bold = re.sub(r"<\s*(?:b|strong)\b[^>]*>.*?</\s*(?:b|strong)\s*>", "", line_no_a, flags=re.I)
+    stripped_bold = re.sub(r"\*\*[^*]+\*\*", "", stripped_bold).strip()
+    return stripped_bold == ""
 
 
 def _format_cn_hk_heading(plain_title: str) -> str:
@@ -371,8 +387,18 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
     is_ai_daily = ("AI 产业日报" in source)
     is_us = ("美股" in source)
     is_cn_hk = ("A股与港股" in source)
+    is_x_or_builder = ("X 热点" in source or "AI Builder" in source)
     in_us_news = False
     pending_star_line: str | None = None
+    has_x_builder_items = is_x_or_builder and any(
+        _is_x_builder_topic_heading(
+            l.strip(),
+            html.unescape(re.sub(r"</?(?:b|strong)>", "", l.strip(), flags=re.I)).strip(),
+        )
+        for l in lines
+        if l.strip()
+    )
+    seen_first_topic = False
 
     i = 0
     while i < len(lines):
@@ -383,6 +409,7 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
             continue
 
         plain_no_b = html.unescape(re.sub(r"</?(?:b|strong)>", "", line, flags=re.I)).strip()
+        plain_clean = re.sub(r"^#{1,3}\s*", "", plain_no_b).strip()
 
         # 跟踪美股要闻段落边界（美股收盘消息①之后、--- 之后）
         if is_us and re.match(r"^(?:#\s*)?(?:<b>)?📋\s*美股要闻", plain_no_b):
@@ -394,9 +421,35 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
             continue
 
         # GitHub & HN：删掉 Notion 正文顶部的重复大标题（页面标题已展示）
-        if is_gh and i <= 4 and re.match(r"^(?:#\s*)?🐙\s*GitHub\s+(?:Trending|Weekly)", plain_no_b, re.I):
+        if is_gh and i <= 4 and re.match(r"^🐙\s*GitHub\s+(?:Trending|Weekly)", plain_clean, re.I):
             i += 1
             continue
+
+        # AI 产业日报：删掉 Notion 正文顶部的 `AI 产业日报 · YYYY-MM-DD` 一级标题，正文直接从首条新闻开始
+        if is_ai_daily and re.match(r"^📋\s*AI\s*产业日报", plain_clean):
+            i += 1
+            continue
+
+        # X 热点播报 & AI Builder：删掉 Notion 正文顶部大标题与开篇导语（上方 30秒速览 属性已完整呈现）
+        if is_x_or_builder:
+            if re.match(r"^(?:🔥\s*X\s*热点|🛠\uFE0F?\s*AI\s*Builder)", plain_clean):
+                i += 1
+                continue
+            is_topic_h2 = _is_x_builder_topic_heading(line, plain_no_b)
+            if is_topic_h2 or plain_clean.startswith("📎") or line.startswith(("---", "━━━")):
+                seen_first_topic = True
+            elif has_x_builder_items and not seen_first_topic:
+                i += 1
+                continue
+            if is_topic_h2:
+                title_for_h2 = re.sub(r"^#{1,3}\s*", "", line).strip()
+                blocks.append({
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": rich_text(title_for_h2)}
+                })
+                i += 1
+                continue
 
         # 分割线
         if line.startswith("---") or line.startswith("━━━"):
@@ -417,21 +470,22 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
                 i += 1
             continue
 
-        # GitHub & HN：一级标题与二级标题层级（跳过普通 markdown/HTML 判定前优先识别）
+        # GitHub & HN：大板块用二级标题（heading_2），每条仓库/HN 标题用三级标题（heading_3）
         if is_gh:
-            if any(plain_no_b.startswith(p) for p in ("🚀 一、", "🔥 一、", "🔥 二、", "📰 二、", "🔥 持续霸榜")):
-                blocks.append({
-                    "object": "block",
-                    "type": "heading_1",
-                    "heading_1": {"rich_text": rich_text(plain_no_b)}
-                })
-                i += 1
-                continue
-            if re.match(r"^(?:<b>|\*\*)?\d+\.(?:</b>|\*\*)?\s*(?:<a\b|\[|<b\b|\*\*)", line, re.I):
+            if any(plain_clean.startswith(p) for p in ("🚀 一、", "🔥 一、", "🔥 二、", "📰 二、", "🔥 持续霸榜", "🚀 首次上榜")):
                 blocks.append({
                     "object": "block",
                     "type": "heading_2",
-                    "heading_2": {"rich_text": rich_text(line)}
+                    "heading_2": {"rich_text": rich_text(plain_clean)}
+                })
+                i += 1
+                continue
+            line_no_hash = re.sub(r"^#{1,3}\s*", "", line).strip()
+            if re.match(r"^(?:<b>|\*\*)?\d+\.(?:</b>|\*\*)?\s*(?:<a\b|\[|<b\b|\*\*)", line_no_hash, re.I):
+                blocks.append({
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {"rich_text": rich_text(line_no_hash)}
                 })
                 i += 1
                 continue
