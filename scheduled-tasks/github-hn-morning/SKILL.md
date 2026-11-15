@@ -1,11 +1,11 @@
 ---
 name: github-hn-morning
-description: 每天早 09:30 自动抓取 GitHub Trending（周一至周六 Daily / 周日 Weekly）与 Hacker News Top 8，使用当前 Automation 选定模型直接写稿并推送到飞书
+description: 每天早 09:30 自动抓取 GitHub Trending（周一至周六 Daily / 周日 Weekly）与 Hacker News Top 8，以 Automation 选定模型为主控并可自主 Orchestrate 写稿与推送到飞书
 ---
 
-目标：每天早上 09:30（在 10:00 美股 & 加密行情日报之前），由本任务自动抓取 GitHub Trending 榜单与 Hacker News 24h 热榜 Top 8（融合 `Best` 高赞榜与 `Top` 实时热议榜），统一使用**当前 Automation 选定的会话模型**直接写稿并推送至飞书。
+目标：每天早上 09:30（在 10:00 美股 & 加密行情日报之前），由本任务自动抓取 GitHub Trending 榜单与 Hacker News 24h 热榜 Top 8（融合 `Best` 高赞榜与 `Top` 实时热议榜）并写稿推送至飞书。
 
-- **模型遵循原则**：直接使用当前 Automation 会话启动的模型写稿落盘，**禁止**调用 `invoke_subagent` 切换或覆盖模型（确保用户在 Automations 界面更改为任意新模型后，下一次执行自动识别并生效）。
+- **模型识别与自主 Orchestrate 原则**：主会话默认直接运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据当天任务复杂度自行决定直接由当前模型完成，或通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 将常规信息整理、初稿撰写等适合轻量化的环节委派给快速响应/轻量化模型处理（若委派子代理写稿，主 Agent 须在 `send` 前完成关键事实与 HTML 排版核验）。
 - **周一至周六（`=== FETCH_OK ===`）**：推送《GitHub Daily 今日飙升榜 + Hacker News 热榜 Top 8》（读 `prompt.md`）。不单列“持续霸榜”模块，遇到前几天已经推送过的重复项目/热帖时，保留在榜单中精简 1 句话总结并注明 `<b>（见 MM月DD日 推送）</b>`。
 - **周日（`=== WEEKLY_OK ===`）**：推送《GitHub Weekly 本周趋势榜 + Hacker News 热榜 Top 8》（读 `prompt_weekly.md`），含「🔥 持续霸榜」模块（全局唯一周趋势回顾）。
 
@@ -35,7 +35,7 @@ bash "/Users/jialiwu/.gemini/bots/github-hn-bot/claude_report.sh" fetch
 - `=== FETCH_OK ===`（周一至周六日榜）或 `=== WEEKLY_OK ===`（周日周榜）：
   使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/github-hn-bot/logs/last_context.txt`，提取 `=== CONTEXT_BEGIN ===` 与 `=== CONTEXT_END ===` 之间内容，进入步骤 2。
 
-### 步骤 2 — 写稿（直接使用当前会话模型）
+### 步骤 2 — 写稿（当前会话模型或自主 Orchestrate 子代理）
 1. 若为 `=== FETCH_OK ===`，使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/github-hn-bot/prompt.md`；
    若为 `=== WEEKLY_OK ===`，使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/github-hn-bot/prompt_weekly.md`。
 2. 严格按对应规范写稿：

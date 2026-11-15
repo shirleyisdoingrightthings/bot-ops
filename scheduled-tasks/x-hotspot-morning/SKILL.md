@@ -5,7 +5,7 @@ description: 每天早 08:30 抓取过去 48 小时 Latent Space AINews（Twitte
 
 目标：每天早上 08:30（独立于下午 `ai-daily-afternoon`，覆盖隔夜美国时间更新的 Latent Space `[AINews]` Twitter Recap），提炼「AI 圈昨天深夜到今天凌晨在吵什么」，给出「有人说 A、也有人说 B」的分歧拆解并推送到飞书（与 `AI Daily News Bot` 共用同一个飞书 webhook）。
 
-- **模型遵循原则**：直接使用当前 Automation 会话启动的模型执行写稿，**禁止**调用 `invoke_subagent` 切换或覆盖模型（确保用户在 Automations 界面更改为任意新模型后，下一次执行自动识别并生效）。
+- **模型识别与自主 Orchestrate 原则**：主会话直接识别并运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据当天话题复杂度与信息密度自行决定由当前模型直接完成，或将适合轻量化的子任务通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 委派给快速响应/轻量化模型处理（委派时主 Agent 须在 `send` 前完成原帖链接与事实准确性核验）。
 
 **时间线**：每天 08:30 触发（主力）→ 09:30 由 `com.shirley.x-hotspot-bot-health` 执行轻量化健康检查（方案 B：不再拉起无头 CLI；若关机/休眠错过 08:30，开机唤醒后由 Antigravity Sidecar 自动补跑）。
 

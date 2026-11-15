@@ -1,11 +1,13 @@
 ---
 name: ai-daily-afternoon
-description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报（使用当前 Automation 选定模型；X 热点已拆至每天早 08:30 独立运行）
+description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报（识别 Automation 选定模型并允许自主 Orchestrate；X 热点已拆至每天早 08:30 独立运行）
 ---
 
-目标：AI 下午两块内容由本任务每天 15:00 使用**当前 Automation 选定的会话模型**直接串行完成抓取、写稿与飞书推送（不做子代理模型切换，确保用户在 Automations 界面更换为任意新模型后自动识别生效）：
+目标：AI 下午两块内容由本任务每天 15:00 串行完成抓取、写稿与飞书推送：
 1. **A：AI 产业日报**（媒体报道了什么 —— **每日统一出《AI 产业日报》，已永久取消周日周回顾**）
 2. **B：AI Builder 日报**（一线研究员 / 创始人 / 工程师本人发了什么与长文）
+
+- **模型识别与自主 Orchestrate 原则**：主会话直接识别并运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据当天内容复杂度自行决定由当前主模型直接完成，或通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 将常规整理、初稿起草等适合轻量化的环节委派给快速响应/轻量化子代理协同处理（若委派子代理写稿，主 Agent 须在 `send` 前完成核心事实、超链接与排版把关）。
 
 > **⚠️ 分工与独立调度说明：**
 > - 《X 热点播报》已移至每天早 **08:30** 的 `x-hotspot-morning` 任务独立运行（48h 窗口），**本任务不要再去跑 `x-hotspot-bot`**。

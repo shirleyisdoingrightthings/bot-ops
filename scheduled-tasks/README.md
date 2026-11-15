@@ -18,7 +18,7 @@
 
 ## 本机依赖的非仓库配置（换机需同步）
 
-1. **Antigravity Sidecars**：`~/.gemini/config/sidecars/<taskId>/sidecar.json`（调度 cron、用户在 Automations 界面选定的 `--model=...` 配置与工作区权限；任务执行时自动跟随界面最新修改的模型，不硬编码也不在脚本或 SKILL 中覆盖）。
+1. **Antigravity Sidecars**：`~/.gemini/config/sidecars/<taskId>/sidecar.json`（调度 cron、用户在 Automations 界面最新选定的 `--model=...` 配置与工作区权限；任务启动时自动识别并使用界面配置的主模型，且允许主 Agent 按任务复杂度自主 Orchestrate 快速/轻量化子代理）。
 2. **`~/Library/LaunchAgents/com.shirley.*-bot.plist`**：权威环境变量源（含 Feishu webhook、FMP/TwelveData/CoinGecko/Notion API key、统一代理 `http://127.0.0.1:1082` 等密钥，**严禁**提交到任何 Git 仓库）。
 3. **轻量化 `launchd` 健康检查（方案 B，无头 CLI 已停用）**：
    - `com.shirley.x-hotspot-bot-health.plist`（每日 09:30）

@@ -9,7 +9,7 @@
    - `ai-builder-bot`（`ai-builder-bot.git`）：每日 15:00 紧随产业日报运行；已过滤 8 个噪音号并接入 `feed-blogs.json`、AINews 白名单 `EXTRA_BUILDERS` 及 5 个顶级 Builder 个人博客 RSS。
    - `shared`（`bot-ops.git`）：共享工具 `bot_utils.py`、统一脚本入口 `report_base.sh`、Notion 归档 `notion_archive.py`、轻量化健康检查与 Level 1 重发保护（`*_base.sh`）及 `scheduled-tasks/` 定义。
 2. **模型调度与健康检查（方案 B）**：
-   - 所有日常定时任务统一由 Antigravity Scheduled Automations 驱动，**始终直接使用各任务在 Automations 界面当前选定的会话模型执行写稿**；禁止在 `SKILL.md`、`sidecar.json` 或子代理调用中硬编码模型名称或调用 `invoke_subagent` 切换/覆盖模型，确保用户在界面手动更换或升级至任意新模型后，下一次运行自动识别并生效。
+   - 所有日常定时任务统一由 Antigravity Scheduled Automations 驱动，**主会话始终自动识别并运行在用户在 Automations 界面为该任务最新选定的模型上**（不硬编码模型版本或强制固定为单一模型），同时**赋予主 Agent 自主 Orchestrate 的自由度**：可根据当次任务复杂度自行判断，直接由当前主模型完成，或将日常常规、格式化、并行起草等轻量化子任务通过 `invoke_subagent(..., Model="flash" / "flash_lite")` 委派给快速响应/轻量化模型协同处理（若委派子代理写稿，主 Agent 须在 `send` 前完成关键事实与排版把关）。
    - 取消 `launchd` 拉起无头 CLI（`ENABLE_HEADLESS_CATCHUP=0`、`ENABLE_CLAUDE_REPAIR=0`）；开机唤醒补跑由 Antigravity Sidecar 自行负责，`launchd` 健康检查仅执行轻量状态核验与本地新鲜草稿（`drafts_fresh`）的 Level 1 非 AI 重发。
 3. **两条工具铁律**：
    - `fetch` 后一律用 `read_file` 读取 `logs/last_context.txt`，严禁重复跑 `fetch`；
