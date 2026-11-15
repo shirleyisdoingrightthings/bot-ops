@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 全量检查、重建缺失归档并刷新 Notion 22 篇（或全库）页面脚本。
-默认支持 `--dry-run`（仅校验并打印新版标题 / 导读 / 市场信号 / Blocks 统计，不写入）。
+默认支持 `--dry-run`（仅校验并打印新版标题 / 信号 / 30秒速览 / Blocks 统计，不写入）。
 """
 from __future__ import annotations
 
@@ -337,7 +337,7 @@ def recover_stripped_overview(
 
     if "美股" in source and "30秒速览" not in body_draft:
         clauses = [c.strip().rstrip("。") for c in summary.split("；") if c.strip()]
-        news_clauses = [c for c in clauses if not c.startswith("【美股盘面】")]
+        news_clauses = [c for c in clauses if "【美股盘面】" not in c and not c.startswith("信号灯：")]
         if news_clauses:
             bullets = "\n".join(f"- {c}" for c in news_clauses)
             m = re.search(r"^(?:#{1,3}\s*)?(?:<b>)?📋\s*美股要闻[^\n]*$", body_draft, re.M)
@@ -384,20 +384,19 @@ def main() -> int:
 
         new_title = na.build_clean_title(source, date_str, report_type=report_type)
         new_summary = na.extract_summary(draft, source=source)
-        new_one_liner = na.extract_one_liner(new_summary, report_text=draft, source=source)
         new_signal = na.extract_market_signal(draft, source=source)
-        new_blocks = na.convert_to_blocks(draft, source=source, summary_override=new_summary)
+        new_blocks = na.convert_to_blocks(draft, source=source)
         chunks = na._chunk_blocks_by_count(new_blocks, max_blocks=80)
         total_rec_blocks = sum(na._count_blocks_recursive(b) for b in new_blocks)
+        callout_cnt = sum(1 for b in new_blocks if b.get("type") == "callout")
 
         sig_disp = new_signal or "-"
         print(
             f"[{idx:02d}] {date_str} | {source} ({report_type}) [{origin}] "
-            f"| 块={len(new_blocks)}({total_rec_blocks}rec/{len(chunks)}chunk) "
+            f"| 块={len(new_blocks)}({total_rec_blocks}rec/{len(chunks)}chunk, callout={callout_cnt}) "
             f"| 信号={sig_disp} | 标题={new_title}"
         )
-        print(f"     导读: {new_one_liner}")
-        print(f"     速览: {new_summary[:120]}{'...' if len(new_summary) > 120 else ''}")
+        print(f"     速览: {new_summary[:140]}{'...' if len(new_summary) > 140 else ''}")
 
         if args.dry_run:
             ok_count += 1
