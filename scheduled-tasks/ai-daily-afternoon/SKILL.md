@@ -1,9 +1,9 @@
 ---
 name: ai-daily-afternoon
-description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报（统一 Flash 模型；X 热点已拆至每天早 08:30 独立运行）
+description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报（使用当前 Automation 选定模型；X 热点已拆至每天早 08:30 独立运行）
 ---
 
-目标：AI 下午两块内容由本任务（Flash 模型）每天 15:00 串行完成抓取、写稿与飞书推送：
+目标：AI 下午两块内容由本任务每天 15:00 使用**当前 Automation 选定的会话模型**直接串行完成抓取、写稿与飞书推送（不做子代理模型切换，确保用户在 Automations 界面更换为任意新模型后自动识别生效）：
 1. **A：AI 产业日报**（媒体报道了什么 —— **每日统一出《AI 产业日报》，已永久取消周日周回顾**）
 2. **B：AI Builder 日报**（一线研究员 / 创始人 / 工程师本人发了什么与长文）
 
@@ -21,7 +21,7 @@ description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报�
 2. **防 `$` 变量吞字**：写稿落盘时，必须使用 `write_file`（`Overwrite: true`）写入各 bot 的 `logs/report_draft.txt`，严禁使用 `cat <<EOF` 或 `echo`。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## 第一部分之 A：AI 产业日报（Flash 写 1 稿）
+## 第一部分之 A：AI 产业日报（写 1 稿）
 
 **每日统一出《AI 产业日报》（包括周日，亦按当日客观新闻出日报，不再出周回顾）。** 全局唯一周趋势回顾已收敛至周日 `github-hn-morning`。
 
@@ -57,7 +57,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" send
 `tail -1 "/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/run.log"`：末行 `[OK] ...` → 记「已推送成功」；`[FAIL]`/`[WARN]` → 记失败并附该行。
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-## 第二部分之 B：AI Builder 日报（Flash 写 1 稿）
+## 第二部分之 B：AI Builder 日报（写 1 稿）
 
 本块播的是 **X 上一线 AI builder 本人最近说了什么与技术长文**，与产业日报「媒体报道了什么」严格分工。排在 A 之后写，主动避开重复或补充一线本人视角。
 
