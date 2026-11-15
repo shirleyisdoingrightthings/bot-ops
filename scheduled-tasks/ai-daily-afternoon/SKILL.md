@@ -28,6 +28,7 @@ description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报�
 **每日统一出《AI 产业日报》（包括周日，亦按当日客观新闻出日报，不再出周回顾）。** 全局唯一周趋势回顾已收敛至周日 `github-hn-morning`。
 
 ### 步骤 1 — 抓取
+执行命令（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 ```
@@ -50,6 +51,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" fetch
 3. 使用 `write_file`（`Overwrite: true`）将纯正文写入 `/Users/jialiwu/.gemini/bots/AI Daily News Bot/logs/report_draft.txt`。
 
 ### 步骤 3 — 发送
+执行命令（若遇沙盒配置报错或拦截飞书/Notion 网络请求，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" send
 ```
@@ -64,6 +66,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" send
 本块播的是 **X 上一线 AI builder 本人最近说了什么与技术长文**，与产业日报「媒体报道了什么」严格分工。排在 A 之后写，主动避开重复或补充一线本人视角。
 
 ### 步骤 1 — 取材
+执行命令（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" fetch
 ```
@@ -88,6 +91,7 @@ bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" fetch
 3. 使用 `write_file`（`Overwrite: true`）将纯正文写入 `/Users/jialiwu/.gemini/bots/ai-builder-bot/logs/report_draft.txt`。
 
 ### 步骤 3 — 发送
+执行命令（若遇沙盒配置报错或拦截飞书/Notion 网络请求，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" send
 ```

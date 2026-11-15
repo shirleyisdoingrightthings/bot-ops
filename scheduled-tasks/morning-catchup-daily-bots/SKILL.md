@@ -25,7 +25,7 @@ description: 每周二至周六早 10:00 写稿并推送《美股收盘 & 加密
 本 bot 播报的是**最近一个已收盘的美股交易日**（附带 24h 加密核心行情），不是"今天"。北京时间周日与周一没有新的收盘场次（美股假期同理），脚本会自行跳过。
 
 ### 步骤 1 — 抓取
-执行命令（若沙箱拦截本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
+执行命令（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 ```
@@ -61,6 +61,7 @@ bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" fetch
 两稿硬约束：日期一律用 context 里的【收盘交易日】，不要用今天的日期；消息①只用 `<b>` 加粗，不用 markdown `**`；消息②只用 `<b>` 和 `<a href>`；英文原标题不翻译。
 
 ### 步骤 3 — 发送
+执行命令（若遇沙盒配置报错或拦截飞书/Notion 网络请求，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/us stock bot/claude_report.sh" send
 ```

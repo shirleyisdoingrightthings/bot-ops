@@ -21,7 +21,7 @@ description: 周一至周五早 09:00（开盘前瞻，过 10:00 自动跳过）
 ## 执行步骤
 
 ### 步骤 1 — 抓取
-根据当前运行场次（09:00 传 `premarket`，16:15 传 `close`）执行：
+根据当前运行场次（09:00 传 `premarket`，16:15 传 `close`）执行（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch premarket
 # 或 16:15 收盘场次：
@@ -41,6 +41,7 @@ bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch close
    - 使用 `write_file`（`Overwrite: true`）将 港股报告写入 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/report_hk.txt`
 
 ### 步骤 3 — 分别发送至 A股 与 港股 飞书机器人
+执行命令（若遇沙盒配置报错或拦截飞书/Notion 网络请求，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" send
 ```

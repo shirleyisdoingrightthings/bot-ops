@@ -70,6 +70,7 @@ _RESIDUAL_TAG_RE = re.compile(r"</?(?:b|strong|i|em|code|a)(?:\s+[^<>]*)?>", re.
 
 def _clean_text(s: str) -> str:
     s = re.sub(r"&amp;(?:amp;)+", "&amp;", s or "")
+    s = re.sub(r"(\d+)\\\.", r"\1.", s)
     return html.unescape(_RESIDUAL_TAG_RE.sub("", s))
 
 
@@ -79,6 +80,7 @@ def _text_items(
     bold: bool = False,
     italic: bool = False,
     code: bool = False,
+    color: str | None = None,
     link: str | None = None,
 ) -> list:
     if not content:
@@ -96,13 +98,21 @@ def _text_items(
             annotations["italic"] = True
         if code:
             annotations["code"] = True
+        if color and color != "default":
+            annotations["color"] = color
         if annotations:
             item["annotations"] = annotations
         items.append(item)
     return items
 
 
-def rich_text(text: str, *, default_bold: bool = False, default_italic: bool = False) -> list:
+def rich_text(
+    text: str,
+    *,
+    default_bold: bool = False,
+    default_italic: bool = False,
+    default_color: str | None = None,
+) -> list:
     """把行内 Markdown 与受控 HTML 转换为 Notion rich_text"""
     # 预处理嵌套 <b>1. <a href="...">Title</a></b> → <b>1.</b> <a href="..."><b>Title</b></a>
     text = re.sub(
@@ -126,6 +136,7 @@ def rich_text(text: str, *, default_bold: bool = False, default_italic: bool = F
                 _clean_text(text[pos : m.start()]),
                 bold=default_bold,
                 italic=default_italic,
+                color=default_color,
             )
         kind = m.lastgroup
         raw = m.group()
@@ -135,6 +146,7 @@ def rich_text(text: str, *, default_bold: bool = False, default_italic: bool = F
                 bold=default_bold,
                 italic=default_italic,
                 code=True,
+                color=default_color,
             )
         elif kind == "bold_link":
             match = re.match(r"\*\*\[([^\]\n]+)\]\(((?:\([^()\s]*\)|[^()\s])+)\)\*\*", raw)
@@ -145,22 +157,22 @@ def rich_text(text: str, *, default_bold: bool = False, default_italic: bool = F
         elif kind == "bold":
             inner = raw[2:-2]
             if re.search(r"<a\s|<(?:i|em)\b|`[^`\n]+`|\[[^\]\n]+\]\((?:\([^()\s]*\)|[^()\s])+\)", inner, re.I):
-                parts += rich_text(inner, default_bold=True, default_italic=default_italic)
+                parts += rich_text(inner, default_bold=True, default_italic=default_italic, default_color=default_color)
             else:
-                parts += _text_items(_clean_text(inner), bold=True, italic=default_italic)
+                parts += _text_items(_clean_text(inner), bold=True, italic=default_italic, color=default_color)
         elif kind == "html_bold":
             inner = raw[3:-4]
             if re.search(r"<a\s|<(?:i|em)\b|`[^`\n]+`|\[[^\]\n]+\]\((?:\([^()\s]*\)|[^()\s])+\)", inner, re.I):
-                parts += rich_text(inner, default_bold=True, default_italic=default_italic)
+                parts += rich_text(inner, default_bold=True, default_italic=default_italic, default_color=default_color)
             else:
-                parts += _text_items(_clean_text(inner), bold=True, italic=default_italic)
+                parts += _text_items(_clean_text(inner), bold=True, italic=default_italic, color=default_color)
         elif kind == "html_italic":
             inner_m = re.match(r"^<(?:i|em)>(.*)</(?:i|em)>$", raw, re.I | re.S)
             inner = inner_m.group(1) if inner_m else raw
             if re.search(r"<a\s|<b\b|\*\*|\[[^\]\n]+\]\((?:\([^()\s]*\)|[^()\s])+\)", inner, re.I):
-                parts += rich_text(inner, default_bold=default_bold, default_italic=True)
+                parts += rich_text(inner, default_bold=default_bold, default_italic=True, default_color=default_color)
             else:
-                parts += _text_items(_clean_text(inner), bold=default_bold, italic=True)
+                parts += _text_items(_clean_text(inner), bold=default_bold, italic=True, color=default_color)
         elif kind == "link":
             match = re.match(r"\[([^\]\n]+)\]\(((?:\([^()\s]*\)|[^()\s])+)\)", raw)
             if match:
@@ -177,8 +189,8 @@ def rich_text(text: str, *, default_bold: bool = False, default_italic: bool = F
             parts += _text_items(clean_anchor or href, bold=is_bold, italic=is_italic, link=valid_href)
         pos = m.end()
     if pos < len(text):
-        parts += _text_items(_clean_text(text[pos:]), bold=default_bold, italic=default_italic)
-    return parts or _text_items(_clean_text(text), bold=default_bold, italic=default_italic)
+        parts += _text_items(_clean_text(text[pos:]), bold=default_bold, italic=default_italic, color=default_color)
+    return parts or _text_items(_clean_text(text), bold=default_bold, italic=default_italic, color=default_color)
 
 
 def _strip_tags_plain(s: str) -> str:
@@ -187,6 +199,7 @@ def _strip_tags_plain(s: str) -> str:
     s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
     s = re.sub(r"<[^>]+>", "", s)
     s = re.sub(r"\*\*([^*]+)\*\*", r"\1", s)
+    s = re.sub(r"(\d+)\\\.", r"\1.", s)
     return html.unescape(s).strip()
 
 
@@ -250,15 +263,19 @@ def _extract_cn_hk_market_brief(section_text: str, market_label: str, is_premark
             elif mode_section == "watch" and re.match(r"^\d+\.\s+", line):
                 head = line.split("：", 1)[0].split(":", 1)[0].strip()
                 watch_titles.append(head)
-            elif mode_section == "signal" and ("信号灯" in line):
-                sig = line.lstrip("·• ").strip()
-                signal_str = sig.split("—", 1)[0].strip()
+            elif mode_section == "signal" and not signal_str and not line.lstrip("·•-* ").strip().startswith(("💡", "👀", "🚨")):
+                cand = line.lstrip("·•-* ").strip()
+                if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?(?:早盘)?信号灯", cand) or cand.startswith(("🟢", "🟡", "🔴")):
+                    sig = re.split(r"\s*[—–]\s*", cand, maxsplit=1)[0].strip()
+                    signal_str = re.sub(r"^(?:🚦\s*)?(?:早盘)?信号灯(?:状态)?[:：]\s*", "信号灯：", sig)
         else:
             if not indices_str and re.match(r"^核心指数", clean_line):
                 indices_str = clean_line
             elif line.startswith("🧭 市场宽度"):
                 if "—" in line:
                     width_str = line.split("—", 1)[1].strip()
+                elif "：" in line:
+                    width_str = line.split("：", 1)[1].strip()
             elif line.startswith("🔥"):
                 mode_section = "gain"
             elif line.startswith("❄️"):
@@ -271,9 +288,11 @@ def _extract_cn_hk_market_brief(section_text: str, market_label: str, is_premark
                     gainers.append(item)
                 elif mode_section == "loss" and len(losers) < 3:
                     losers.append(item)
-            elif mode_section == "signal" and "信号灯状态" in line:
-                sig = line.lstrip("·• ").strip()
-                signal_str = sig.split("—", 1)[0].strip()
+            elif mode_section == "signal" and not signal_str and not line.lstrip("·•-* ").strip().startswith(("💡", "👀", "🚨")):
+                cand = line.lstrip("·•-* ").strip()
+                if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?信号灯", cand) or cand.startswith(("🟢", "🟡", "🔴")):
+                    sig = re.split(r"\s*[—–]\s*", cand, maxsplit=1)[0].strip()
+                    signal_str = re.sub(r"^(?:🚦\s*)?信号灯(?:状态)?[:：]\s*", "信号灯：", sig)
 
     parts = []
     if signal_str:
@@ -311,24 +330,28 @@ def _extract_us_market_brief(market_text: str) -> str:
     fear_str = ""
     for line in plain_lines:
         clean = re.sub(r"^(?:[\U0001F1E6-\U0001F1FF]{2}|[\U0001F300-\U0001FAFF\u2600-\u27BF\uFE0F\s])+", "", line).strip()
-        if not indices_str and re.match(r"^核心指数[:：]", clean):
+        if not indices_str and re.match(r"^核心指数[:：\s]", clean):
             indices_str = clean
-        elif not crypto_str and line.startswith("🪙"):
+        if not crypto_str and line.startswith("🪙"):
             m_btc = re.search(r"(BTC\s+[^|｜\n]+)", clean)
             crypto_str = m_btc.group(1).strip() if m_btc else clean
-        elif not fear_str and "恐贪指数" in clean:
+        if not fear_str and "恐贪指数" in clean:
             m_fg = re.search(r"(恐贪指数\s*[^|｜\n]+)", clean)
             if m_fg:
                 fear_str = m_fg.group(1).strip()
-        elif not signal_str and "信号灯" in line:
-            sig = line.lstrip("·• ").strip().split("—", 1)[0].strip()
-            signal_str = re.sub(r"^信号灯状态[:：]", "信号灯：", sig)
+        if not signal_str and not line.lstrip("·•-* ").strip().startswith(("💡", "👀", "🚨")):
+            cand = line.lstrip("·•-* ").strip()
+            if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?信号灯", cand):
+                sig = re.split(r"\s*[—–]\s*", cand, maxsplit=1)[0].strip()
+                signal_str = re.sub(r"^(?:🚦\s*)?信号灯(?:状态)?[:：]\s*", "信号灯：", sig)
 
     parts = [p for p in (signal_str, indices_str) if p]
-    if crypto_str and fear_str:
+    if crypto_str and fear_str and "恐贪" not in crypto_str:
         parts.append(f"{crypto_str} ({fear_str})")
     elif crypto_str:
         parts.append(crypto_str)
+    elif fear_str:
+        parts.append(fear_str)
     if not parts:
         return ""
     return "【美股盘面】" + "｜".join(p.rstrip("；;。") for p in parts)
@@ -366,9 +389,15 @@ def extract_summary(text: str, source: str = "") -> str:
 
     # 1.5 美股与加密：前置消息①盘面与加密信号灯 + 消息②美股要闻 30秒速览
     if "美股" in source or "美股收盘" in text:
-        secs = re.split(r"\n\s*---+\s*\n", text, maxsplit=1)
-        market_brief = _extract_us_market_brief(secs[0]) if ("美股收盘" in secs[0] or len(secs) > 1) else ""
-        news_sec = secs[1] if len(secs) > 1 else text
+        if re.search(r"(?:#{1,3}\s*|<b>|\*\*)*📋\s*美股要闻", text):
+            secs = re.split(r"(?=\n\s*(?:#{1,3}\s*)?(?:<b>|\*\*)?📋\s*美股要闻)", text, maxsplit=1)
+            market_part = re.sub(r"\n\s*---+\s*$", "", secs[0]).strip()
+            market_brief = _extract_us_market_brief(market_part) if (len(secs) > 1 or "美股收盘" in market_part) else ""
+            news_sec = secs[1] if len(secs) > 1 else text
+        else:
+            secs = re.split(r"\n\s*---+\s*\n", text, maxsplit=1)
+            market_brief = _extract_us_market_brief(secs[0]) if ("美股收盘" in secs[0] or len(secs) > 1) else ""
+            news_sec = secs[1] if len(secs) > 1 else text
         content_lines = _extract_summary_bullets(news_sec)
         clauses = ([market_brief] if market_brief else []) + content_lines
         if clauses:
@@ -389,16 +418,16 @@ def extract_summary(text: str, source: str = "") -> str:
         plain_lines = [l for l in plain_lines if l]
         overview = ""
         topics: list[str] = []
-        for idx, line in enumerate(plain_lines):
+        for line in plain_lines:
             if re.match(r"^(?:🔥\s*X\s*热点|🛠\uFE0F?\s*AI\s*Builder)", line):
                 continue
-            if re.match(r"^\d+\.\s+", line) and len(line) <= 80:
+            if re.match(r"^\d+\.\s+", line) and len(line) <= 100:
                 topics.append(line)
-            elif not overview and not line.startswith(("原帖：", "原推：", "长文", "素材：", "📎", "- ")):
+            elif not overview and not line.startswith(("原帖：", "原推：", "长文", "素材：", "📎", "- ", "---")):
                 overview = line
         if overview:
             overview = re.sub(
-                r"^这批推文(?:集中)?(?:发布于|来自)\s+[^，,。（(]+?(?:\s*[（(][^）)]*UTC[^）)]*[）)]|\s*UTC)?(?:\s*[（(][^）)]*[）)])?\s*[，,：:]\s*",
+                r"^这批(?:推文|动态)(?:集中)?(?:发布于|来自|涵盖)\s+[^\n，。]*?(?:\s*[（(][^）)]*[）)])?\s*(?:[，,]|(?<!\d)[：:](?!\d))\s*",
                 "",
                 overview,
             ).strip()
@@ -422,6 +451,168 @@ def extract_summary(text: str, source: str = "") -> str:
         if idx >= 180:
             return cut[: idx + (1 if sep != ". " else 1)].strip()
     return cut
+
+
+def _classify_signal_line(s: str) -> str | None:
+    if not s:
+        return None
+    # 优先依据首个出现的交通灯 Emoji 定性（防止后半句“控仓防守”等词汇反客为主）
+    emoji_hits = [
+        (s.find(em), label)
+        for em, label in (("🟢", "🟢 偏多"), ("🟡", "🟡 震荡分化"), ("🔴", "🔴 防守承压"))
+        if em in s
+    ]
+    if emoji_hits:
+        return min(emoji_hits, key=lambda x: x[0])[1]
+
+    head = re.split(r"\s*[—–]\s*", s, maxsplit=1)[0]
+    if "偏多" in head or "积极进攻" in head:
+        return "🟢 偏多"
+    if "震荡" in head or "分化" in head or "观望" in head:
+        return "🟡 震荡分化"
+    if "防守承压" in head or "防御承压" in head or "偏空" in head or "承压防守" in head or "防守" in head or "谨慎" in head:
+        return "🔴 防守承压"
+    return None
+
+
+def extract_market_signal(text: str, source: str = "") -> str | None:
+    """仅对金融信源提取 Notion `🚦 市场信号` 枚举值（🟢 偏多 / 🟡 震荡分化 / 🔴 防守承压）"""
+    if "美股" not in source and "A股与港股" not in source:
+        return None
+
+    sections = re.split(r"\n\s*---+\s*\n", text, maxsplit=1) if "A股与港股" in source else [text]
+    signals: list[str] = []
+    for sec in sections:
+        sec_sig = None
+        in_target = False
+        for raw_line in sec.splitlines():
+            plain = re.sub(r"^#{1,3}\s*", "", _strip_tags_plain(raw_line)).lstrip("·•-* ").strip()
+            if not plain:
+                continue
+            if plain.startswith("🎯"):
+                in_target = True
+                continue
+            if plain.startswith(("💡", "👀", "🚨")):
+                continue
+            if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?(?:早盘)?信号灯(?:状态)?[:：\s]", plain):
+                sec_sig = _classify_signal_line(plain)
+                if sec_sig:
+                    break
+            elif in_target and plain.startswith(("🟢", "🟡", "🔴")):
+                sec_sig = _classify_signal_line(plain)
+                if sec_sig:
+                    break
+        if sec_sig:
+            signals.append(sec_sig)
+
+    if not signals:
+        return None
+    uniq = set(signals)
+    if len(uniq) == 1:
+        return signals[0]
+    if "🟢 偏多" in uniq and "🔴 防守承压" in uniq:
+        return "🟡 震荡分化"
+    if "🔴 防守承压" in uniq:
+        return "🔴 防守承压"
+    if "🟡 震荡分化" in uniq:
+        return "🟡 震荡分化"
+    return "🟢 偏多"
+
+
+def _trim_at_boundary(s: str, max_chars: int = 95) -> str:
+    s = re.sub(r"\s+", " ", (s or "")).strip().rstrip("；;，, ")
+    if len(s) <= max_chars:
+        return s
+    cut = s[: max_chars - 1]
+    for sep in ("；", "｜", "|", "。", "，", " "):
+        idx = cut.rfind(sep)
+        if idx >= max_chars // 2:
+            return cut[:idx].rstrip("；｜|。，, ") + "…"
+    return cut + "…"
+
+
+def _extract_index_snippet(market_clause: str, limit: int = 1) -> str:
+    m = re.search(r"(?:核心指数|隔夜(?:外围映射|中概))[:：]\s*([^；\n]+)", market_clause)
+    if not m:
+        return ""
+    items = [p.strip() for p in re.split(r"\s*[|｜]\s*", m.group(1)) if p.strip()]
+    return " / ".join(items[:limit]) if items else ""
+
+
+def extract_one_liner(summary: str, report_text: str = "", source: str = "", max_chars: int = 95) -> str:
+    """生成表格与看板卡片专用的精炼 `一句话导读`（严格控制在 95 字以内）"""
+    if not summary:
+        summary = extract_summary(report_text, source=source)
+    if not summary:
+        return ""
+
+    if "A股与港股" in source:
+        parts = []
+        for label in ("A股", "港股"):
+            m = re.search(rf"【{label}】([^【]+)", summary)
+            if not m:
+                continue
+            seg = m.group(1)
+            sig_m = re.search(r"(?:早盘)?信号灯[:：]\s*([^；\n]+)", seg)
+            if not sig_m:
+                sig_m = re.search(r"([🟢🟡🔴][^；\n]+)", seg)
+            sig_val = sig_m.group(1).strip() if sig_m else ""
+            sig_val = re.sub(r"\s*[（(][^）)]*[）)]\s*$", "", sig_val).strip()
+            sig_val = re.sub(r"^([🟢🟡🔴])(\S)", r"\1 \2", sig_val)
+            idx_val = _extract_index_snippet(seg, limit=1)
+            piece = f"{label} {sig_val}" if sig_val else label
+            if idx_val:
+                piece += f" ({idx_val})"
+            parts.append(piece.strip())
+        if parts:
+            return _trim_at_boundary("｜".join(parts), max_chars=max_chars)
+
+    if "美股" in source:
+        clauses = [c.strip() for c in re.split(r"[；\n]+", summary) if c.strip()]
+        head = ""
+        news_first = ""
+        for c in clauses:
+            if c.startswith("【美股盘面】"):
+                body = c.replace("【美股盘面】", "", 1).replace("信号灯：", "").strip()
+                sub = [p.strip() for p in body.split("｜") if p.strip()]
+                sig = re.sub(r"^([🟢🟡🔴])(\S)", r"\1 \2", sub[0]) if sub else ""
+                idx = _extract_index_snippet(body, limit=2)
+                head = f"{sig}｜{idx}" if sig and idx else (sig or body)
+            elif not news_first:
+                news_first = c
+        if head and news_first and len(head) + 1 + len(news_first) <= max_chars:
+            return _trim_at_boundary(f"{head}；{news_first}", max_chars=max_chars)
+        combined = head or news_first
+        if combined:
+            return _trim_at_boundary(combined, max_chars=max_chars)
+
+    clauses = [c.strip() for c in re.split(r"[；\n]+", summary) if c.strip()]
+    if not clauses:
+        return _trim_at_boundary(summary, max_chars=max_chars)
+    first = re.sub(r"^本期焦点[:：]\s*", "", clauses[0]).strip()
+    if len(clauses) >= 2 and len(first) <= 45 and not clauses[1].startswith("本期焦点"):
+        cand = f"{first}；{clauses[1]}"
+        if len(cand) <= max_chars:
+            return cand.rstrip("；;。")
+    return _trim_at_boundary(first, max_chars=max_chars)
+
+
+def build_clean_title(source: str, date_str: str, report_type: str = "日报") -> str:
+    """构建去冗余括号的清晰 Notion 页面标题"""
+    if "GitHub & HN" in source:
+        return f"{date_str} GitHub & HN 本周趋势榜" if report_type == "周盘点" else f"{date_str} GitHub & HN 早报"
+    if "美股" in source:
+        return f"{date_str} 美股收盘 & 加密行情"
+    if "A股与港股" in source:
+        suffix = report_type if report_type in ("开盘前瞻", "收盘复盘") else "决策复盘"
+        return f"{date_str} A股&港股 {suffix}"
+    if "AI 产业日报" in source:
+        return f"{date_str} AI 产业日报"
+    if "X 热点" in source:
+        return f"{date_str} X 热点播报"
+    if "AI Builder" in source:
+        return f"{date_str} AI Builder 日报"
+    return f"{date_str} {source} {report_type}".strip()
 
 
 def _is_star_line(line: str) -> bool:
@@ -485,9 +676,202 @@ def _format_cn_hk_heading(plain_title: str) -> str:
     return re.sub(r"(\d{4})年(\d{1,2})月(\d{1,2})日", _repl, plain_title)
 
 
-def convert_to_blocks(content: str, source: str = "") -> list[dict]:
-    """将稿件转换为 Notion Blocks 结构，并按信源优化 Notion 目录层级与去重排版"""
-    blocks = []
+def _p_block(text: str, *, bold: bool = False, italic: bool = False, color: str | None = None) -> dict:
+    return {
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {"rich_text": rich_text(text, default_bold=bold, default_italic=italic, default_color=color)},
+    }
+
+
+def _h_block(level: int, text: str) -> dict:
+    htype = f"heading_{level}"
+    return {"object": "block", "type": htype, htype: {"rich_text": rich_text(text)}}
+
+
+def _bullet_block(text: str, *, bold: bool = False, color: str | None = None) -> dict:
+    return {
+        "object": "block",
+        "type": "bulleted_list_item",
+        "bulleted_list_item": {"rich_text": rich_text(text, default_bold=bold, default_color=color)},
+    }
+
+
+def _num_block(text: str, *, color: str | None = None) -> dict:
+    return {
+        "object": "block",
+        "type": "numbered_list_item",
+        "numbered_list_item": {"rich_text": rich_text(text, default_color=color)},
+    }
+
+
+def _callout_block(
+    title_text: str,
+    *,
+    emoji: str = "⚡",
+    color: str = "blue_background",
+    children: list[dict] | None = None,
+) -> dict:
+    body: dict = {
+        "rich_text": rich_text(title_text, default_bold=True),
+        "icon": {"type": "emoji", "emoji": emoji},
+        "color": color,
+    }
+    if children:
+        body["children"] = children
+    return {"object": "block", "type": "callout", "callout": body}
+
+
+def _toggle_block(title_text: str, children: list[dict]) -> dict:
+    return {
+        "object": "block",
+        "type": "toggle",
+        "toggle": {
+            "rich_text": rich_text(title_text, default_bold=True),
+            "children": children,
+        },
+    }
+
+
+def _table_block(rows: list[tuple[str, str]], headers: tuple[str, str] = ("指标维度", "核心数据与状态")) -> dict:
+    def _row(col1: str, col2: str, *, bold_col1: bool = True, bold_all: bool = False) -> dict:
+        return {
+            "object": "block",
+            "type": "table_row",
+            "table_row": {
+                "cells": [
+                    rich_text(col1, default_bold=(bold_col1 or bold_all)),
+                    rich_text(col2, default_bold=bold_all),
+                ]
+            },
+        }
+
+    children = [_row(headers[0], headers[1], bold_all=True)] + [_row(k, v) for k, v in rows]
+    return {
+        "object": "block",
+        "type": "table",
+        "table": {
+            "table_width": 2,
+            "has_column_header": True,
+            "has_row_header": False,
+            "children": children,
+        },
+    }
+
+
+def _count_blocks_recursive(block: dict) -> int:
+    btype = block.get("type", "")
+    inner = block.get(btype) or {}
+    children = inner.get("children") or []
+    return 1 + sum(_count_blocks_recursive(c) for c in children)
+
+
+def _chunk_blocks_by_count(blocks: list[dict], max_blocks: int = 80) -> list[list[dict]]:
+    chunks: list[list[dict]] = []
+    cur: list[dict] = []
+    cur_count = 0
+    for b in blocks:
+        b_count = _count_blocks_recursive(b)
+        if cur and (cur_count + b_count > max_blocks or len(cur) >= max_blocks):
+            chunks.append(cur)
+            cur = []
+            cur_count = 0
+        cur.append(b)
+        cur_count += b_count
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
+_METRIC_PREFIXES = ("📈", "📊", "🧭", "📐", "💰", "💸", "🌍", "🌡", "🪙", "🇺🇸", "📅")
+_META_PREFIXES = ("Original:", "Original：", "🏷️", "🛠️", "原帖：", "原帖:", "原推：", "原推:", "素材：")
+
+
+def _is_metadata_line(plain_clean: str) -> bool:
+    return plain_clean.startswith(_META_PREFIXES) or _is_star_line(plain_clean)
+
+
+def _split_metric_row(raw_line: str) -> tuple[str, str] | None:
+    """将金融报告顶部单行指标拆分为表格 (指标维度, 核心数据) 两列"""
+    plain = _strip_tags_plain(raw_line).lstrip("·•-* ").strip()
+    if not plain or len(plain) < 6 or not plain.startswith(_METRIC_PREFIXES):
+        return None
+    if re.match(r"^(?:📊\s*美股收盘|🇨🇳\s*A股|🇭🇰\s*港股)", plain):
+        return None
+
+    m_plain = re.match(r"^(.{2,28}?)\s*(?:：|(?<!\d):(?!\d)|—|–)\s*(.+)$", plain)
+    if not m_plain:
+        return None
+
+    if "<a " not in raw_line.lower():
+        return m_plain.group(1).strip(), m_plain.group(2).strip()
+
+    m_raw = re.match(
+        r"^(?:[-·•]\s*)?(?:<(?:b|strong)\b[^>]*>)?([^：<>\n]{2,28}?)(?:</(?:b|strong)>)?\s*(?:：|(?<!https)(?<!http)(?<!\d):(?!\d)|—|–)\s*(?:</(?:b|strong)>)?\s*(.+)$",
+        raw_line.strip(),
+        re.I,
+    )
+    if m_raw:
+        k = _strip_tags_plain(m_raw.group(1)).strip()
+        v = re.sub(r"^\s*</(?:b|strong)>\s*", "", m_raw.group(2)).strip()
+        if k and v:
+            return k, v
+    return m_plain.group(1).strip(), m_plain.group(2).strip()
+
+
+def _build_summary_callout(summary_text: str, source: str = "") -> dict | None:
+    """构建页面顶部蓝色 `⚡ 30秒速览` Callout 模块"""
+    s = (summary_text or "").strip()
+    if not s:
+        return None
+
+    children: list[dict] = []
+    if "A股与港股" in source and ("【A股】" in s or "【港股】" in s):
+        for label, flag in (("A股", "🇨🇳"), ("港股", "🇭🇰")):
+            m = re.search(rf"【{label}】([^【]+)", s)
+            if m:
+                seg = m.group(1).strip().rstrip("；;。")
+                children.append(_bullet_block(f"<b>{flag} {label}：</b>{seg}"))
+    elif "美股" in source and "【美股盘面】" in s:
+        for clause in re.split(r"[；\n]+", s):
+            c = clause.strip().rstrip("；;。")
+            if not c:
+                continue
+            if c.startswith("【美股盘面】"):
+                body = c.replace("【美股盘面】", "", 1).strip()
+                children.append(_bullet_block(f"<b>🗽 美股盘面：</b>{body}"))
+            else:
+                children.append(_bullet_block(c))
+    else:
+        for clause in re.split(r"[；\n]+", s):
+            c = clause.strip().rstrip("；;")
+            if not c:
+                continue
+            if c.startswith("本期焦点："):
+                rest = c.split("：", 1)[1].strip()
+                children.append(_bullet_block(f"<b>本期焦点：</b>{rest}"))
+            else:
+                children.append(_bullet_block(c))
+
+    if not children:
+        children = [_p_block(s)]
+    return _callout_block("⚡ 30秒速览", emoji="⚡", color="blue_background", children=children[:25])
+
+
+def _extract_numbered_body(line: str) -> str | None:
+    """识别 1. / 1\\. 编号列表项，返回剥离编号后的富文本内容（保留内嵌 HTML 标签）"""
+    m = re.match(r"^(\d{1,2})\\?\.\s+(.+)$", line)
+    if m:
+        return m.group(2).strip()
+    m_b = re.match(r"^<(b|strong)>(\d{1,2})\\?\.\s+(.+)$", line, re.I)
+    if m_b:
+        return f"<{m_b.group(1)}>{m_b.group(3).strip()}"
+    return None
+
+
+def convert_to_blocks(content: str, source: str = "", *, summary_override: str | None = None) -> list[dict]:
+    """将稿件转换为 Notion Blocks 结构，并按信源优化 Callout、指标表格、折叠区与目录层级"""
+    blocks: list[dict] = []
     lines = content.splitlines()
     is_gh = ("GitHub & HN" in source)
     is_ai_daily = ("AI 产业日报" in source)
@@ -496,6 +880,7 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
     is_x_or_builder = ("X 热点" in source or "AI Builder" in source)
     in_us_news = False
     in_details = False
+    in_sector_section = False
     seen_gh_content = False
     pending_star_line: str | None = None
     has_x_builder_items = is_x_or_builder and any(
@@ -507,6 +892,20 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
         if l.strip()
     )
     seen_first_topic = False
+
+    summary_text = summary_override if summary_override is not None else extract_summary(content, source=source)
+    summary_callout = _build_summary_callout(summary_text, source=source)
+
+    def _is_h1_line(raw_l: str, p_no_b: str) -> bool:
+        if raw_l.startswith("# "):
+            return True
+        return bool(
+            re.match(
+                r"^(?:🌅\s*)?(?:📊\s*美股收盘|📋\s*(?:AI\s*产业日报|美股要闻)|🐙\s*GitHub|🔥\s*X\s*热点|🛠️?\s*AI\s*Builder|🇨🇳\s*A股(?:开盘前瞻|收盘复盘)|🇭🇰\s*港股(?:开盘前瞻|收盘复盘))",
+                p_no_b,
+            )
+            and ((raw_l.startswith("<b>") and raw_l.endswith("</b>")) or raw_l.startswith(("📋", "📊", "🌅", "🇨🇳", "🇭🇰")))
+        )
 
     i = 0
     while i < len(lines):
@@ -523,6 +922,7 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
         if is_us and re.match(r"^(?:#\s*)?(?:<b>)?📋\s*美股要闻", plain_no_b):
             in_us_news = True
             in_details = False
+            in_sector_section = False
 
         # A股与港股：删掉冗余的 `## 📈 A股市场（...）` / `## 🇭🇰 港股市场（...）` 外层标题
         if is_cn_hk and re.match(r"^(?:#{1,3}\s*)?(?:📈|📉|🇭🇰|🇨🇳|\s)*(?:A股|港股)市场（.*?）\s*$", plain_no_b):
@@ -539,7 +939,7 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
             i += 1
             continue
 
-        # X 热点播报 & AI Builder：删掉 Notion 正文顶部大标题与开篇导语（上方 30秒速览 属性已完整呈现）
+        # X 热点播报 & AI Builder：删掉 Notion 正文顶部大标题与开篇导语（顶部蓝色 30秒速览 Callout 已完整呈现）
         if is_x_or_builder:
             if re.match(r"^(?:🔥\s*X\s*热点|🛠\uFE0F?\s*AI\s*Builder)", plain_clean):
                 i += 1
@@ -552,26 +952,23 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
                 continue
             if is_topic_h2:
                 title_for_h2 = re.sub(r"^#{1,3}\s*", "", line).strip()
-                blocks.append({
-                    "object": "block",
-                    "type": "heading_2",
-                    "heading_2": {"rich_text": rich_text(title_for_h2)}
-                })
+                blocks.append(_h_block(2, title_for_h2))
                 i += 1
                 continue
 
         # 分割线
         if line.startswith("---") or line.startswith("━━━"):
             if pending_star_line:
-                blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": rich_text(pending_star_line)}})
+                blocks.append(_p_block(pending_star_line, color="gray"))
                 pending_star_line = None
             in_details = False
+            in_sector_section = False
             seen_gh_content = True
             blocks.append({"object": "block", "type": "divider", "divider": {}})
             i += 1
             continue
 
-        # 30 秒速览处理：AI 产业日报 / 美股要闻 / GitHub & HN 在 Notion 正文中删去重复的 30秒速览（上方属性已完整显示）
+        # 30 秒速览处理：顶部蓝色 Callout 已完整渲染，正文中删去重复的 30秒速览 与紧邻要点
         if "30秒速览" in plain_no_b and (line.startswith(("<b>", "#", ">", "⚡", "30秒速览", "**")) or re.match(r"^#{1,3}\s*⚡?\s*30秒速览", line)):
             i += 1
             while i < len(lines) and (
@@ -581,34 +978,134 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
                 i += 1
             continue
 
+        # 金融市场指标多行合并为 2 列 Notion Table
+        if is_cn_hk or (is_us and not in_us_news):
+            first_row = _split_metric_row(line)
+            if first_row:
+                metric_rows = [first_row]
+                j = i + 1
+                while j < len(lines):
+                    nxt = lines[j].strip()
+                    if not nxt:
+                        k = j + 1
+                        while k < len(lines) and not lines[k].strip():
+                            k += 1
+                        if k < len(lines) and _split_metric_row(lines[k].strip()):
+                            j = k
+                            continue
+                        break
+                    nxt_row = _split_metric_row(nxt)
+                    if not nxt_row:
+                        break
+                    metric_rows.append(nxt_row)
+                    j += 1
+                if len(metric_rows) >= 2:
+                    blocks.append(_table_block(metric_rows))
+                    i = j
+                    continue
+
+        # 金融市场 `🎯 决策仪表盘` / `🎯 早盘决策仪表盘` / `🎯 投资启示` 收拢为红/黄/绿信号 Callout
+        if (is_cn_hk or (is_us and not in_us_news)) and plain_clean.startswith("🎯"):
+            in_sector_section = False
+            callout_lines: list[tuple[str, str]] = []
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                if not nxt:
+                    j += 1
+                    continue
+                nxt_no_b = html.unescape(re.sub(r"</?(?:b|strong)>", "", nxt, flags=re.I)).strip()
+                nxt_clean = re.sub(r"^#{1,3}\s*", "", nxt_no_b).strip()
+                if nxt.startswith(("---", "━━━")) or _is_h1_line(nxt, nxt_no_b):
+                    break
+                if re.match(r"^(?:#{1,3}\s*)?(?:📈|📉|🇭🇰|🇨🇳|\s)*(?:A股|港股)市场（.*?）\s*$", nxt_no_b):
+                    break
+                if nxt_clean.startswith(("🚀", "🔥", "❄️", "⚡", "🔭", "📰", "📎")):
+                    break
+                callout_lines.append((nxt, nxt_clean))
+                j += 1
+                if len(callout_lines) >= 25:
+                    break
+
+            combined_sig_txt = "\n".join([plain_clean] + [p for _, p in callout_lines])
+            callout_sig = _classify_signal_line(combined_sig_txt)
+            callout_color = (
+                "red_background"
+                if callout_sig == "🔴 防守承压"
+                else ("green_background" if callout_sig == "🟢 偏多" else "yellow_background")
+            )
+            c_children: list[dict] = []
+            for raw_sub, sub_plain in callout_lines:
+                b_m = re.match(r"^(?:-\s+|[·•●▪]\s*)", raw_sub)
+                if b_m:
+                    c_children.append(_bullet_block(raw_sub[b_m.end():].strip()))
+                else:
+                    n_txt = _extract_numbered_body(raw_sub)
+                    if n_txt is not None:
+                        c_children.append(_num_block(n_txt))
+                    else:
+                        c_children.append(_p_block(raw_sub))
+            blocks.append(_callout_block(plain_clean, emoji="🎯", color=callout_color, children=c_children))
+            i = j
+            continue
+
+        # GitHub & HN：每周周榜 `🔥 持续霸榜` 收拢为可折叠 Toggle 区块
+        if is_gh and plain_clean.startswith("🔥 持续霸榜"):
+            seen_gh_content = True
+            toggle_children: list[dict] = []
+            repo_count = 0
+            j = i + 1
+            while j < len(lines):
+                nxt = lines[j].strip()
+                if not nxt:
+                    j += 1
+                    continue
+                nxt_no_b = html.unescape(re.sub(r"</?(?:b|strong)>", "", nxt, flags=re.I)).strip()
+                nxt_clean = re.sub(r"^#{1,3}\s*", "", nxt_no_b).strip()
+                if nxt.startswith(("---", "━━━", "# ", "## ")) or any(
+                    nxt_clean.startswith(p) for p in ("🚀", "🔥", "📰", "⚡", "📊")
+                ):
+                    break
+                nxt_no_hash = re.sub(r"^#{1,3}\s*", "", nxt).strip()
+                if re.match(r"^(?:<b>|\*\*)?\d+\.(?:</b>|\*\*)?\s*(?:<a\b|\[|<b\b|\*\*)", nxt_no_hash, re.I):
+                    repo_count += 1
+                    toggle_children.append(_h_block(3, nxt_no_hash))
+                else:
+                    b_m = re.match(r"^(?:-\s+|[·•●▪]\s*)", nxt)
+                    if b_m:
+                        item_txt = nxt[b_m.end():].strip()
+                        item_plain = _strip_tags_plain(item_txt)
+                        toggle_children.append(_bullet_block(item_txt, color=("gray" if _is_metadata_line(item_plain) else None)))
+                    else:
+                        toggle_children.append(_p_block(nxt, color=("gray" if _is_metadata_line(nxt_clean) else None)))
+                j += 1
+
+            toggle_title = f"🔥 持续霸榜（本周反复上榜 · 共 {repo_count} 项，点击展开）" if repo_count else plain_clean
+            blocks.append(_toggle_block(toggle_title, toggle_children[:60]))
+            for extra in toggle_children[60:]:
+                blocks.append(extra)
+            i = j
+            continue
+
         # GitHub & HN：大板块用二级标题（heading_2），每条仓库/HN 标题用三级标题（heading_3）
         if is_gh:
             seen_gh_content = True
             if any(plain_clean.startswith(p) for p in ("🚀 一、", "🔥 一、", "🔥 二、", "📰 二、", "🔥 持续霸榜", "🚀 首次上榜")):
-                blocks.append({
-                    "object": "block",
-                    "type": "heading_2",
-                    "heading_2": {"rich_text": rich_text(plain_clean)}
-                })
+                blocks.append(_h_block(2, plain_clean))
                 i += 1
                 continue
             line_no_hash = re.sub(r"^#{1,3}\s*", "", line).strip()
             if re.match(r"^(?:<b>|\*\*)?\d+\.(?:</b>|\*\*)?\s*(?:<a\b|\[|<b\b|\*\*)", line_no_hash, re.I):
-                blocks.append({
-                    "object": "block",
-                    "type": "heading_3",
-                    "heading_3": {"rich_text": rich_text(line_no_hash)}
-                })
+                blocks.append(_h_block(3, line_no_hash))
                 i += 1
                 continue
 
-        # AI 产业日报 & 美股要闻：新闻标题（heading_2）→ 星级以及 tag 标签 → details（兼容新旧两种顺序）
+        # AI 产业日报 & 美股要闻：新闻标题（heading_2）→ 灰色星级与 tag → 合并行内 `📄 The Details：`
         if is_ai_daily or (is_us and in_us_news):
             if _is_star_line(line):
                 in_details = False
-                # 兼容旧顺序：先遇到星级行，暂存，紧接着把下一行的标题作为 H2 放到前面
                 if pending_star_line:
-                    blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": rich_text(pending_star_line)}})
+                    blocks.append(_p_block(pending_star_line, color="gray"))
                 pending_star_line = line
                 i += 1
                 continue
@@ -616,105 +1113,131 @@ def convert_to_blocks(content: str, source: str = "") -> list[dict]:
             if (not in_details or line.startswith("## ") or _is_standalone_headline_link(line)) and _is_news_headline_line(line):
                 in_details = False
                 title_for_h2 = re.sub(r"^#{1,3}\s*", "", line).strip()
-                blocks.append({
-                    "object": "block",
-                    "type": "heading_2",
-                    "heading_2": {"rich_text": rich_text(title_for_h2)}
-                })
+                blocks.append(_h_block(2, title_for_h2))
                 if pending_star_line:
-                    blocks.append({
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {"rich_text": rich_text(pending_star_line)}
-                    })
+                    blocks.append(_p_block(pending_star_line, color="gray"))
                     pending_star_line = None
+                i += 1
+                continue
+
+            if pending_star_line:
+                blocks.append(_p_block(pending_star_line, color="gray"))
+                pending_star_line = None
+
+            if re.match(r"^(?:<b>|\*\*)?📄\s*The\s*Details[:：]?(?:</b>|\*\*)?$", plain_clean, re.I):
+                in_details = True
+                k = i + 1
+                while k < len(lines) and not lines[k].strip():
+                    k += 1
+                if k < len(lines):
+                    nxt_raw = lines[k].strip()
+                    nxt_p_no_b = html.unescape(re.sub(r"</?(?:b|strong)>", "", nxt_raw, flags=re.I)).strip()
+                    nxt_clean = re.sub(r"^#{1,3}\s*", "", nxt_p_no_b).strip()
+                    if (
+                        not nxt_raw.startswith(("#", "---", "━━━", "-", "•", "·", "●", "▪"))
+                        and not _is_star_line(nxt_raw)
+                        and not _is_news_headline_line(nxt_raw)
+                        and not _is_metadata_line(nxt_clean)
+                        and not nxt_clean.startswith(("📄", "⚡", "📋", "📊", "🎯"))
+                    ):
+                        blocks.append(_p_block(f"<b>📄 The Details：</b>{nxt_raw}"))
+                        i = k + 1
+                        continue
+                blocks.append(_p_block("<b>📄 The Details：</b>"))
                 i += 1
                 continue
 
             if plain_clean.startswith("📄"):
                 in_details = True
 
-            if pending_star_line:
-                blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": rich_text(pending_star_line)}})
-                pending_star_line = None
-
         # Markdown 标题处理（含从 Notion 导出的 #/##/###）
         if line.startswith("### "):
-            blocks.append({
-                "object": "block",
-                "type": "heading_3",
-                "heading_3": {"rich_text": rich_text(line[4:].strip())}
-            })
+            blocks.append(_h_block(3, line[4:].strip()))
             i += 1
             continue
         if line.startswith("## "):
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": rich_text(line[3:].strip())}
-            })
+            h2_txt = line[3:].strip()
+            h2_plain = _strip_tags_plain(h2_txt)
+            if is_cn_hk or (is_us and not in_us_news):
+                if h2_plain.startswith(("🔥", "❄️")):
+                    in_sector_section = True
+                elif h2_plain.startswith(("🔭", "🎯", "⚡")):
+                    in_sector_section = False
+            blocks.append(_h_block(2, h2_txt))
             i += 1
             continue
         if line.startswith("# "):
+            in_sector_section = False
             h1_text = line[2:].strip()
             if is_cn_hk:
                 h1_text = _format_cn_hk_heading(h1_text)
-            blocks.append({
-                "object": "block",
-                "type": "heading_1",
-                "heading_1": {"rich_text": rich_text(h1_text)}
-            })
+            blocks.append(_h_block(1, h1_text))
             i += 1
             continue
 
         # HTML 顶层主标题（日报/早报/收盘复盘总标题 → heading_1）
-        if re.match(
-            r"^(?:🌅\s*)?(?:📊\s*美股收盘|📋\s*(?:AI\s*产业日报|美股要闻)|🐙\s*GitHub|🔥\s*X\s*热点|🛠️?\s*AI\s*Builder|🇨🇳\s*A股(?:开盘前瞻|收盘复盘)|🇭🇰\s*港股(?:开盘前瞻|收盘复盘))",
-            plain_no_b,
-        ) and ((line.startswith("<b>") and line.endswith("</b>")) or line.startswith(("📋", "📊", "🌅", "🇨🇳", "🇭🇰"))):
+        if _is_h1_line(line, plain_no_b):
+            in_sector_section = False
             h1_text = _format_cn_hk_heading(plain_no_b) if is_cn_hk else plain_no_b
-            blocks.append({
-                "object": "block",
-                "type": "heading_1",
-                "heading_1": {"rich_text": rich_text(h1_text)}
-            })
+            blocks.append(_h_block(1, h1_text))
             i += 1
             continue
 
         # HTML 风格板块标题（🚀/🔥/❄️/⚡/🔭/🎯/📰/📎/一、/二、/三、 → heading_2）
         _H2_PREFIXES = ("🚀", "🔥", "❄️", "⚡", "🔭", "🎯", "📰", "📎", "一、", "二、", "三、", "四、")
         if line.startswith("<b>") and line.endswith("</b>") and line.count("<b>") == 1 and any(plain_no_b.startswith(p) for p in _H2_PREFIXES):
-            blocks.append({
-                "object": "block",
-                "type": "heading_2",
-                "heading_2": {"rich_text": rich_text(plain_no_b)}
-            })
+            if is_cn_hk or (is_us and not in_us_news):
+                if plain_no_b.startswith(("🔥", "❄️")):
+                    in_sector_section = True
+                elif plain_no_b.startswith(("🔭", "🎯", "⚡")):
+                    in_sector_section = False
+            blocks.append(_h_block(2, plain_no_b))
+            i += 1
+            continue
+
+        # 领涨 / 领跌 Top 3 板块条目提升为 heading_3，方便目录锚点定位
+        if in_sector_section and (is_cn_hk or (is_us and not in_us_news)) and re.match(r"^\d+\\?\.\s+\S", plain_clean):
+            blocks.append(_h_block(3, re.sub(r"^#{1,3}\s*", "", line).strip()))
             i += 1
             continue
 
         # 列表条目（兼容 - / · / • / ● / ▪）
         bullet_m = re.match(r"^(?:-\s+|[·•●▪]\s*)", line)
         if bullet_m:
-            blocks.append({
-                "object": "block",
-                "type": "bulleted_list_item",
-                "bulleted_list_item": {"rich_text": rich_text(line[bullet_m.end():].strip())}
-            })
+            item_txt = line[bullet_m.end():].strip()
+            item_plain = _strip_tags_plain(item_txt)
+            blocks.append(_bullet_block(item_txt, color=("gray" if _is_metadata_line(item_plain) else None)))
             i += 1
             continue
 
-        # 普通段落
-        blocks.append({
-            "object": "block",
-            "type": "paragraph",
-            "paragraph": {"rich_text": rich_text(line)}
-        })
+        # 原生编号列表（消除 Notion Markdown `1\. ` 转义问题）
+        num_txt = _extract_numbered_body(line)
+        if num_txt is not None:
+            num_plain = _strip_tags_plain(num_txt)
+            blocks.append(_num_block(num_txt, color=("gray" if _is_metadata_line(num_plain) else None)))
+            i += 1
+            continue
+
+        # 普通段落（灰色弱化纯元数据行）
+        blocks.append(_p_block(line, color=("gray" if _is_metadata_line(plain_clean) else None)))
         i += 1
 
     if pending_star_line:
-        blocks.append({"object": "block", "type": "paragraph", "paragraph": {"rich_text": rich_text(pending_star_line)}})
+        blocks.append(_p_block(pending_star_line, color="gray"))
 
-    return blocks
+    # 清理首尾与连续重复 divider，保留跨消息或参考资料前的有效分割线
+    cleaned_body: list[dict] = []
+    for b in blocks:
+        if b["type"] == "divider":
+            if not cleaned_body or cleaned_body[-1]["type"] in ("divider", "heading_1"):
+                continue
+        cleaned_body.append(b)
+    while cleaned_body and cleaned_body[-1]["type"] == "divider":
+        cleaned_body.pop()
+
+    if summary_callout:
+        return [summary_callout] + cleaned_body
+    return cleaned_body
 
 
 def archive_to_notion(
@@ -741,37 +1264,43 @@ def archive_to_notion(
     year, week, _ = dt.isocalendar()
     week_str = f"{year}-W{week:02d}"
 
-    # 自动推导标题与图标
+    # 自动推导清晰标题、图标、导读与市场信号
     icon_map = {
-        "🐙 GitHub & HN": ("🐙", f"[GitHub & HN] {date_str} 今日早报"),
-        "🗽 美股与加密": ("🗽", f"[美股收盘] {date_str} 美股与加密行情"),
-        "📈 A股与港股": ("📈", f"[A股与港股] {date_str} 决策复盘"),
-        "🤖 AI 产业日报": ("🤖", f"[AI 产业日报] {date_str} 行业观察"),
-        "🐦 X 热点播报": ("🐦", f"[X 热点播报] {date_str} 圈内动态"),
-        "🛠️ AI Builder": ("🛠️", f"[AI Builder] {date_str} 开发者动态"),
+        "🐙 GitHub & HN": "🐙",
+        "🗽 美股与加密": "🗽",
+        "📈 A股与港股": "📈",
+        "🤖 AI 产业日报": "🤖",
+        "🐦 X 热点播报": "🐦",
+        "🛠️ AI Builder": "🛠️",
     }
-
-    icon, default_title = icon_map.get(source, ("📑", f"[{source}] {date_str} 日报"))
-    if report_type == "周盘点":
-        default_title = default_title.replace("今日早报", "本周趋势榜").replace("日报", "周盘点")
-    title = title_override or default_title
+    icon = icon_map.get(source, "📑")
+    title = title_override or build_clean_title(source, date_str, report_type=report_type)
 
     summary = extract_summary(report_text, source=source)
-    blocks = convert_to_blocks(report_text, source=source)
+    one_liner = extract_one_liner(summary, report_text=report_text, source=source)
+    market_signal = extract_market_signal(report_text, source=source)
+    blocks = convert_to_blocks(report_text, source=source, summary_override=summary)
+    block_chunks = _chunk_blocks_by_count(blocks, max_blocks=80)
+    first_chunk = block_chunks[0] if block_chunks else []
+    rest_chunks = block_chunks[1:] if len(block_chunks) > 1 else []
 
-    # 构造请求体 (首次写入前 90 个 block，若超过在后序 append)
-    first_chunk = blocks[:90]
+    props = {
+        "标题": {"title": [{"text": {"content": title}}]},
+        "日期": {"date": {"start": date_str}},
+        "周次": {"select": {"name": week_str}},
+        "信源": {"select": {"name": source}},
+        "类型": {"select": {"name": report_type}},
+        "30秒速览": {"rich_text": rich_text(summary)},
+        "一句话导读": {"rich_text": rich_text(one_liner)},
+    }
+    if market_signal:
+        props["🚦 市场信号"] = {"select": {"name": market_signal}}
+
+    # 构造请求体 (首次写入第 1 个安全递归切片，其余在后续追加)
     payload = {
         "parent": {"database_id": database_id},
         "icon": {"type": "emoji", "emoji": icon},
-        "properties": {
-            "标题": {"title": [{"text": {"content": title}}]},
-            "日期": {"date": {"start": date_str}},
-            "周次": {"select": {"name": week_str}},
-            "信源": {"select": {"name": source}},
-            "类型": {"select": {"name": report_type}},
-            "30秒速览": {"rich_text": rich_text(summary)},
-        },
+        "properties": props,
         "children": first_chunk,
     }
 
@@ -965,15 +1494,14 @@ def archive_to_notion(
                         time.sleep(min(2 ** attempt, 8))
             return None, last_err
 
-        def _append_chunks(target_page_id: str, chunk_blocks: list[dict]) -> tuple[bool, list[str], str]:
+        def _append_chunk_list(target_page_id: str, chunks: list[list[dict]]) -> tuple[bool, list[str], str]:
             created_ids: list[str] = []
-            for j in range(0, len(chunk_blocks), 90):
-                chunk = chunk_blocks[j : j + 90]
+            for idx, chunk in enumerate(chunks):
                 app_resp, app_err = _request_with_retry(
                     "PATCH",
                     f"https://api.notion.com/v1/blocks/{target_page_id}/children",
                     json_body={"children": chunk},
-                    timeout=30,
+                    timeout=35,
                 )
                 if app_resp is None:
                     return False, created_ids, f"重试失败: {app_err}"
@@ -983,7 +1511,7 @@ def archive_to_notion(
                     bid = blk.get("id")
                     if bid:
                         created_ids.append(bid)
-                if j + 90 < len(chunk_blocks):
+                if idx + 1 < len(chunks):
                     time.sleep(0.35)
             return True, created_ids, ""
 
@@ -1011,13 +1539,13 @@ def archive_to_notion(
 
         matches = [m for m in (q_resp.json().get("results") or []) if not m.get("archived")]
 
-        # 分支 A：库内尚无当日记录 -> 新建页面（必要时追加 >90 的剩余块，任何失败均返回 False）
+        # 分支 A：库内尚无当日记录 -> 新建页面（必要时安全追加剩余块切片，任何失败均返回 False）
         if not matches:
             resp, last_err = _request_with_retry(
                 "POST",
                 "https://api.notion.com/v1/pages",
                 json_body=payload,
-                timeout=30,
+                timeout=35,
             )
             if resp is None:
                 return False, f"Notion 同步异常（重试均失败）: {last_err}"
@@ -1028,9 +1556,9 @@ def archive_to_notion(
             page_id = data.get("id")
             page_url = data.get("url") or (f"https://notion.so/{page_id.replace('-', '')}" if page_id else "")
 
-            if len(blocks) > 90 and page_id:
+            if rest_chunks and page_id:
                 time.sleep(0.35)
-                app_ok, _, app_err = _append_chunks(page_id, blocks[90:])
+                app_ok, _, app_err = _append_chunk_list(page_id, rest_chunks)
                 if not app_ok:
                     return False, f"Notion 后续区块追加失败 ({page_url}): {app_err}"
 
@@ -1064,10 +1592,14 @@ def archive_to_notion(
                 break
             time.sleep(0.35)
 
+        patch_props = dict(payload["properties"])
+        if "🚦 市场信号" not in patch_props:
+            patch_props["🚦 市场信号"] = {"select": None}
+
         p_resp, p_err = _request_with_retry(
             "PATCH",
             f"https://api.notion.com/v1/pages/{page_id}",
-            json_body={"icon": payload["icon"], "properties": payload["properties"]},
+            json_body={"icon": payload["icon"], "properties": patch_props},
             timeout=30,
         )
         if p_resp is None:
@@ -1075,9 +1607,9 @@ def archive_to_notion(
         if p_resp.status_code >= 400:
             return False, f"Notion 页面属性更新失败 ({page_url}) HTTP {p_resp.status_code}: {p_resp.text}"
 
-        if blocks:
+        if block_chunks:
             time.sleep(0.35)
-            app_ok, created_ids, app_err = _append_chunks(page_id, blocks)
+            app_ok, created_ids, app_err = _append_chunk_list(page_id, block_chunks)
             if not app_ok:
                 # 仅回滚本次已写入的新区块，保留旧区块避免页面内容丢失
                 for cid in created_ids:
