@@ -221,9 +221,30 @@ Original: Some title
         self.assertIn(("heading_3", "1. 某个热门讨论"), types_texts)
 
     def test_cn_hk_strips_outer_market_heading_and_splits_divider(self):
+        empty_section_draft = """## 📈 A股市场（2026年11月13日 收盘复盘）
+
+<b>🇨🇳 A股收盘复盘 · 2026年11月13日</b>
+
+---
+
+## 🇭🇰 港股市场（2026年11月13日 收盘复盘）
+
+<b>🇭🇰 港股收盘复盘 · 2026年11月13日</b>
+"""
+        empty_blocks = na.convert_to_blocks(empty_section_draft, source="📈 A股与港股")
+        self.assertEqual(
+            [(b["type"], _block_plain(b)) for b in empty_blocks],
+            [
+                ("heading_1", "🇨🇳 A股收盘复盘 · 2026-11-13"),
+                ("heading_1", "🇭🇰 港股收盘复盘 · 2026-11-13"),
+            ],
+        )
+
         draft = """## 📈 A股市场（2026年11月13日 收盘复盘）
 
 <b>🇨🇳 A股收盘复盘 · 2026年11月13日</b>
+
+核心指数小幅收跌。
 
 ---
 
@@ -235,8 +256,8 @@ Original: Some title
         types_texts = [(b["type"], _block_plain(b)) for b in blocks]
         self.assertNotIn(("heading_2", "📈 A股市场（2026年11月13日 收盘复盘）"), types_texts)
         self.assertEqual(types_texts[0], ("heading_1", "🇨🇳 A股收盘复盘 · 2026-11-13"))
-        self.assertEqual(types_texts[1], ("divider", "---"))
-        self.assertEqual(types_texts[2], ("heading_1", "🇭🇰 港股收盘复盘 · 2026-11-13"))
+        self.assertEqual(types_texts[2], ("divider", "---"))
+        self.assertEqual(types_texts[3], ("heading_1", "🇭🇰 港股收盘复盘 · 2026-11-13"))
 
     def test_dot_bullets_become_bulleted_list_items(self):
         draft = """<b>🇨🇳 A股收盘复盘 · 2026年11月13日</b>
@@ -336,9 +357,9 @@ class TestExtractSummaryBySource(unittest.TestCase):
 · <b>信号灯状态</b>：🔴 防守控仓 — 恒科承压
 """
         s = na.extract_summary(close_doc, source="📈 A股与港股")
-        self.assertIn("【A股】信号灯状态：🔴 防守控仓", s)
-        self.assertIn("【港股】信号灯状态：🔴 防守控仓", s)
-        self.assertTrue(s.index("信号灯状态：🔴 防守控仓") < s.index("核心指数：上证指数"))
+        self.assertTrue(s.startswith("信号灯：A股 🔴 防守承压 / 港股 🔴 防守承压｜"))
+        self.assertIn("【A股】核心指数：上证指数", s)
+        self.assertIn("【港股】核心指数：恒生指数", s)
         self.assertTrue(s.endswith("。"))
 
         premarket_doc = """<b>🌅 🇨🇳 A股开盘前瞻 · 2026-11-13</b>
@@ -350,8 +371,8 @@ class TestExtractSummaryBySource(unittest.TestCase):
 · <b>早盘信号灯</b>：🔴 承压防守 — 谨慎追高
 """
         sp = na.extract_summary(premarket_doc, source="📈 A股与港股")
-        self.assertIn("【A股】早盘信号灯：🔴 承压防守", sp)
-        self.assertTrue(sp.index("早盘信号灯：🔴 承压防守") < sp.index("隔夜外围映射"))
+        self.assertTrue(sp.startswith("信号灯：A股 🔴 防守承压｜"))
+        self.assertIn("隔夜外围映射：纳指 (-0.39%)", sp)
 
     def test_ai_daily_and_github_and_builder_summary(self):
         ai_doc = """<b>📋 AI 产业日报 · 2026-11-14</b>
@@ -421,7 +442,7 @@ class TestExtractSummaryBySource(unittest.TestCase):
 <a href="https://cnbc.com/1"><b>详细标题</b></a>
 """
         us_sum = na.extract_summary(us_doc, source="🗽 美股与加密")
-        self.assertTrue(us_sum.startswith("【美股盘面】信号灯：🟢 温和偏多"))
+        self.assertTrue(us_sum.startswith("信号灯：🟢 偏多｜【美股盘面】"))
         self.assertIn("BTC $91,200 (+2.1%) (恐贪指数 72 (贪婪))", us_sum)
         self.assertIn("要闻一：美联储会议纪要偏鸽", us_sum)
         self.assertIn("要闻二：科技巨头资本开支维持高位", us_sum)
@@ -466,7 +487,7 @@ class TestArchiveToNotionHttp(unittest.TestCase):
         self.assertEqual(props["周次"]["select"]["name"], "2026-W46")
         self.assertEqual(props["信源"]["select"]["name"], "🤖 AI 产业日报")
         self.assertEqual(props["类型"]["select"]["name"], "日报")
-        self.assertEqual(props["标题"]["title"][0]["text"]["content"], "[AI 产业日报] 2026-11-14 行业观察")
+        self.assertEqual(props["标题"]["title"][0]["text"]["content"], "2026-11-14 AI 产业日报")
 
         bad_resp = MagicMock(status_code=400, text="validation error")
         with patch.object(na, "get_notion_api_key", return_value="secret_test"), patch(
@@ -500,12 +521,12 @@ class TestArchiveToNotionHttp(unittest.TestCase):
             ("POST", f"https://api.notion.com/v1/databases/{na.DEFAULT_DATABASE_ID}/query"),
         )
         self.assertEqual(mock_req.call_args_list[1].args[:2], ("POST", "https://api.notion.com/v1/pages"))
-        self.assertEqual(len(mock_req.call_args_list[1].kwargs["json"]["children"]), 90)
+        self.assertEqual(len(mock_req.call_args_list[1].kwargs["json"]["children"]), 80)
         self.assertEqual(
             mock_req.call_args_list[2].args[:2],
             ("PATCH", "https://api.notion.com/v1/blocks/page-abc/children"),
         )
-        self.assertEqual(len(mock_req.call_args_list[2].kwargs["json"]["children"]), 15)
+        self.assertEqual(len(mock_req.call_args_list[2].kwargs["json"]["children"]), 25)
 
     def test_upsert_updates_in_place_preserving_page_id_and_archiving_dups(self):
         calls = []
@@ -691,6 +712,78 @@ class TestArchiveToNotionHttp(unittest.TestCase):
         self.assertIn(("GET", "https://api.notion.com/v1/blocks/p-curl/children?page_size=100", False), curl_steps)
         self.assertIn(("DELETE", "https://api.notion.com/v1/blocks/old-c1", False), curl_steps)
         mock_sleep.assert_any_call(1.0)
+
+
+class TestTableFitWidth(unittest.TestCase):
+    def test_build_fit_width_updates_handles_cn_dual_tables_and_idempotency(self):
+        md_two = (
+            "# 复盘\n"
+            '<table header-row="true">\n<tr>\n<td>**指标维度**</td>\n<td>**核心数据与状态**</td>\n</tr>\n'
+            '<tr>\n<td>**📊 核心指数**</td>\n<td>上证指数 3655.83 (-0.67%) \\| 创业板 2509.43 (-2.44%)</td>\n</tr>\n</table>\n'
+            '<table header-row="true">\n<colgroup>\n<col width="320">\n<col width="320">\n</colgroup>\n'
+            '<tr>\n<td>**指标维度**</td>\n<td>**核心数据与状态**</td>\n</tr>\n'
+            '<tr>\n<td>**📊 核心指数**</td>\n<td>恒生指数 23981.00 (-1.38%) \\| 恒生科技 3925.62 (-2.52%)</td>\n</tr>\n</table>\n'
+        )
+        updates = na._build_fit_width_updates(md_two)
+        self.assertEqual(len(updates), 2)
+        for u in updates:
+            self.assertIn('<table fit-page-width="true" header-row="true">', u["new_str"])
+            self.assertIn('<colgroup>\n<col width="196">\n<col width="512">\n</colgroup>', u["new_str"])
+
+        # Re-running on updated markdown is idempotent
+        updated_md = md_two
+        for u in updates:
+            updated_md = updated_md.replace(u["old_str"], u["new_str"], 1)
+        self.assertEqual(na._build_fit_width_updates(updated_md), [])
+
+        # Three-column table splits 708px evenly
+        md_three = '<table header-row="true">\n<tr><td>A</td><td>B</td><td>C</td></tr>\n</table>'
+        u3 = na._build_fit_width_updates(md_three)
+        self.assertEqual(len(u3), 1)
+        self.assertIn('<col width="236">\n<col width="236">\n<col width="236">', u3[0]["new_str"])
+
+    def test_archive_to_notion_applies_fit_width_only_when_tables_present(self):
+        table_draft = (
+            "<b>📊 美股收盘 & 加密行情 · 2026-11-14</b>\n\n"
+            "📈 <b>核心指数</b>：标普500 6012 (+0.42%) | 纳指 19100 (+0.65%)\n"
+            "🪙 <b>加密核心 24h</b>：BTC $91,200 (+2.1%)"
+        )
+        calls = []
+
+        def fake_req(method, url, **kwargs):
+            calls.append((method, url, dict(kwargs.get("headers") or {}), kwargs.get("json")))
+            r = MagicMock(status_code=200)
+            if url.endswith("/query"):
+                r.json.return_value = {"results": []}
+            elif method == "POST" and url.endswith("/v1/pages"):
+                r.json.return_value = {"id": "page-tbl", "url": "https://notion.so/pagetbl"}
+            elif method == "GET" and url.endswith("/v1/pages/page-tbl/markdown"):
+                r.json.return_value = {
+                    "markdown": '<table header-row="true">\n<tr><td>**指标维度**</td><td>**核心数据与状态**</td></tr>\n'
+                    '<tr><td>**📈 核心指数**</td><td>标普500 6012 (+0.42%) \\| 纳指 19100 (+0.65%)</td></tr>\n</table>'
+                }
+            elif method == "PATCH" and url.endswith("/v1/pages/page-tbl/markdown"):
+                r.json.return_value = {"markdown": "ok"}
+            else:
+                return MagicMock(status_code=500, text="unexpected")
+            return r
+
+        with patch.object(na, "get_notion_api_key", return_value="secret_test"), patch(
+            "bot_utils.resolve_proxy", return_value=(None, "")
+        ), patch("requests.Session.request", side_effect=fake_req), patch("time.sleep"):
+            ok, url = na.archive_to_notion(table_draft, "🗽 美股与加密", date_str="2026-11-14")
+
+        self.assertTrue(ok)
+        self.assertEqual(url, "https://notion.so/pagetbl")
+        md_calls = [(m, u, h, j) for m, u, h, j in calls if u.endswith("/markdown")]
+        self.assertEqual(len(md_calls), 2)
+        self.assertEqual(md_calls[0][0], "GET")
+        self.assertEqual(md_calls[0][2].get("Notion-Version"), na.NOTION_MARKDOWN_VERSION)
+        self.assertEqual(md_calls[1][0], "PATCH")
+        self.assertEqual(md_calls[1][2].get("Notion-Version"), na.NOTION_MARKDOWN_VERSION)
+        cu = md_calls[1][3]["update_content"]["content_updates"]
+        self.assertEqual(len(cu), 1)
+        self.assertIn('<col width="196">\n<col width="512">', cu[0]["new_str"])
 
 
 if __name__ == "__main__":

@@ -36,7 +36,7 @@ echo "$(ts)  ===== AI 三块串行体检开始 ====="
 for name in "${CHAIN[@]}"; do
     script="$BOTS_DIR/$name/health_check.sh"
     if [ ! -f "$script" ]; then
-        echo "$(ts)  ❌ 找不到 $script，跳过这一块"
+        echo "$(ts)  ❌ 找不到 ${script}，跳过这一块"
         continue
     fi
 
@@ -61,6 +61,6 @@ for name in "${CHAIN[@]}"; do
     rc=$?
     # health_check 的退出码是「状态」不是「错误」：0=健康、1=触发了无头补跑、
     # 2=触发了 auto_repair。任何一块的结果都不能中断整条链。
-    echo "$(ts)  --- $name 结束（exit=$rc）---"
+    echo "$(ts)  --- $name 结束（exit=${rc}）---"
 done
 echo "$(ts)  ===== AI 三块串行体检结束 ====="

@@ -124,7 +124,7 @@ class TestNotionReconcile(unittest.TestCase):
             self.assertEqual(len(failed_tasks), 2)
             cn_task = [t for t in failed_tasks if t["bot"] == "cn-hk-stock-bot"][0]
             self.assertEqual(cn_task["report_type"], "开盘前瞻")
-            self.assertEqual(cn_task["title_override"], "[A股与港股] 2026-11-14 开盘前瞻")
+            self.assertIsNone(cn_task["title_override"])
             gh_task = [t for t in failed_tasks if t["bot"] == "github-hn-bot"][0]
             self.assertEqual(gh_task["report_type"], "周盘点")
 
@@ -135,8 +135,8 @@ class TestNotionReconcile(unittest.TestCase):
             self.assertEqual(
                 [(t["report_type"], t["title_override"]) for t in force_tasks],
                 [
-                    ("收盘复盘", "[A股与港股] 2026-11-14 收盘复盘"),
-                    ("开盘前瞻", "[A股与港股] 2026-11-14 开盘前瞻"),
+                    ("收盘复盘", None),
+                    ("开盘前瞻", None),
                 ],
             )
 
@@ -219,6 +219,50 @@ source "{health_base}"
             proc2 = subprocess.run(["/bin/bash", str(wrapper)], text=True, capture_output=True)
             self.assertEqual(proc2.returncode, 0)
             self.assertNotIn("notion_ok=False", proc2.stdout)
+
+    def test_cn_hk_session_filter_prevents_morning_ok_masking_and_matches_ere(self):
+        health_base = SHARED_DIR / "health_check_base.sh"
+        today = datetime.now().strftime("%Y-%m-%d")
+        with tempfile.TemporaryDirectory() as tmp:
+            bot_dir = Path(tmp)
+            logs_dir = bot_dir / "logs"
+            logs_dir.mkdir(parents=True)
+            # 早盘 premarket [OK] 不得掩盖晚盘 close 缺跑或失败
+            (logs_dir / "run.log").write_text(
+                f"{today} 09:05  [OK]  A股(1500字) + 港股(1400字) 飞书双机器人推送成功 (premarket)\n",
+                encoding="utf-8",
+            )
+            wrapper = bot_dir / "health_check.sh"
+            wrapper.write_text(
+                f"""#!/bin/bash
+DIR="{bot_dir}"
+BOT_NAME="CN-HK-Test"
+CATCHUP_FROM=0
+CATCHUP_UNTIL=24
+MISSING_WAIT_SEC=0
+SESSION_FILTER="close"
+NO_NEWS_PATTERN="休市|非交易日|自动跳过"
+NO_NEWS_MSG="今日休市"
+ENABLE_CLAUDE_REPAIR=0
+MISSED_LOOKBACK=0
+source "{health_base}"
+""",
+                encoding="utf-8",
+            )
+            proc = subprocess.run(["/bin/bash", str(wrapper)], text=True, capture_output=True)
+            self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+            self.assertEqual(proc.stderr, "")
+            self.assertIn(f"[health_check] WARN: 今天（{today}）无运行记录", proc.stdout)
+
+            # 非交易日休市 ERE WARN（含 | 分隔符）应判定为 NO_NEWS 而非 MISSING
+            (logs_dir / "run.log").write_text(
+                f"{today} 16:15  [WARN]  沪深港今日均休市（close；A股最近 20261113），未出稿\n",
+                encoding="utf-8",
+            )
+            proc2 = subprocess.run(["/bin/bash", str(wrapper)], text=True, capture_output=True)
+            self.assertEqual(proc2.returncode, 0, msg=proc2.stderr)
+            self.assertEqual(proc2.stderr, "")
+            self.assertIn(f"[health_check] NO_NEWS: 今天（{today}）今日休市", proc2.stdout)
 
 
 if __name__ == "__main__":

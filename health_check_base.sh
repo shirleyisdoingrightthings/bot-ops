@@ -103,13 +103,28 @@ if [ -n "$MISSED" ]; then
     echo "[health_check] 缺跑（仅本地记录，不推送）：最近 $MISSED_LOOKBACK 天内这些日期无任何运行记录 — $MISSED"
 fi
 
+# 按可选 SESSION_FILTER 过滤今日日志行（解决 A/H 双场次日志互相掩盖）
+_today_log_lines() {
+    local lines
+    lines=$(grep "^$TODAY" "$LOG" 2>/dev/null || true)
+    if [ "${SESSION_FILTER:-}" = "close" ]; then
+        printf '%s\n' "$lines" | grep -Ev '(\(premarket\)|（premarket）|开盘前瞻)' | grep -E '(\(close\)|（close）|收盘复盘| (1[6-9]|2[0-3]):)' || true
+    elif [ "${SESSION_FILTER:-}" = "premarket" ]; then
+        printf '%s\n' "$lines" | grep -Ev '(\(close\)|（close）|收盘复盘)' | grep -E '(\(premarket\)|（premarket）|开盘前瞻| (0[0-9]|1[0-5]):)' || true
+    else
+        printf '%s\n' "$lines"
+    fi
+}
+
 # ── 2. 判断今天的运行状态（基于日期，而不是 tail -1）────────────────
 get_today_status() {
-    if grep -q "$TODAY.*\[OK\]" "$LOG"; then
+    local today_lines
+    today_lines=$(_today_log_lines)
+    if printf '%s\n' "$today_lines" | grep -q "\[OK\]"; then
         echo "OK"
-    elif grep -q "$TODAY.*\[FAIL\]" "$LOG"; then
+    elif printf '%s\n' "$today_lines" | grep -q "\[FAIL\]"; then
         echo "FAIL"
-    elif grep -q "$TODAY.*\[WARN\].*$NO_NEWS_PATTERN" "$LOG"; then
+    elif printf '%s\n' "$today_lines" | grep -qE "\[WARN\].*($NO_NEWS_PATTERN)"; then
         # 终态 WARN：当天确实没有值得播的东西，不是故障。
         # 补跑也只会再抓一次同样的空结果，白烧 token 还弹"需人工介入"。
         # 注意：代理不可用 / 行情数据缺失这两类 WARN 不在此列——它们是暂时性的，
@@ -125,15 +140,16 @@ get_today_status() {
 STATUS=$(get_today_status)
 
 # 若今天无记录，等待 60s 再判一次（应对补跑竞态：脚本可能仍在运行中）
-if [ "$STATUS" = "MISSING" ]; then
-    echo "[health_check] 今天暂无运行记录，等待 60s 后重判（可能为补跑中）..."
-    sleep 60
+MISSING_WAIT_SEC=${MISSING_WAIT_SEC:-60}
+if [ "$STATUS" = "MISSING" ] && [ "$MISSING_WAIT_SEC" -gt 0 ]; then
+    echo "[health_check] 今天暂无运行记录，等待 ${MISSING_WAIT_SEC}s 后重判（可能为补跑中）..."
+    sleep "$MISSING_WAIT_SEC"
     STATUS=$(get_today_status)
 fi
 
 # ── 3. 根据状态分支处理 ───────────────────────────────────────────────
 if [ "$STATUS" = "FAIL" ]; then
-    ERR_LINE=$(grep "$TODAY.*\[FAIL\]" "$LOG" | tail -1)
+    ERR_LINE=$(_today_log_lines | grep "\[FAIL\]" | tail -1)
     ERR=$(echo "$ERR_LINE" | sed 's/.*\[FAIL\]  //')
     SHORT=$(echo "$ERR" | cut -c1-120)
     TS=$(echo "$ERR_LINE" | cut -c1-16)
@@ -161,24 +177,24 @@ if [ "$STATUS" = "FAIL" ]; then
 
 elif [ "$STATUS" = "MISSING" ]; then
     if [ "$HOUR" -lt "$CATCHUP_FROM" ] || [ "$HOUR" -ge "$CATCHUP_UNTIL" ]; then
-        echo "[health_check] 今天（$TODAY）无运行记录，但当前 ${HOUR} 点不在检查窗口 ${CATCHUP_FROM}-${CATCHUP_UNTIL} 点内，跳过告警"
+        echo "[health_check] 今天（${TODAY}）无运行记录，但当前 ${HOUR} 点不在检查窗口 ${CATCHUP_FROM}-${CATCHUP_UNTIL} 点内，跳过告警"
         exit 0
     fi
     if [ "$ENABLE_HEADLESS_CATCHUP" = "1" ] && [ -x "$DIR/claude_catchup.sh" ]; then
         notify WARN "今天主脚本未运行，已触发无头补跑"
-        echo "[health_check] WARN: 今天（$TODAY）无任何运行记录，触发无头补跑..."
+        echo "[health_check] WARN: 今天（${TODAY}）无任何运行记录，触发无头补跑..."
         bash "$DIR/claude_catchup.sh"
         exit 1
     fi
     notify WARN "今天主脚本尚无运行记录（已交由 Antigravity Sidecar 唤醒补跑，launchd 不再拉起无头 CLI）"
-    echo "[health_check] WARN: 今天（$TODAY）无运行记录，等待 Antigravity Sidecar 自动补跑"
+    echo "[health_check] WARN: 今天（${TODAY}）无运行记录，等待 Antigravity Sidecar 自动补跑"
     exit 0
 fi
 
 if [ "$STATUS" = "NO_NEWS" ]; then
     # 正常终态：不补跑、不自愈、不计入 OK streak
     notify INFO "$NO_NEWS_MSG"
-    echo "[health_check] NO_NEWS: 今天（$TODAY）$NO_NEWS_MSG，属正常终态，不触发补跑"
+    echo "[health_check] NO_NEWS: 今天（${TODAY}）${NO_NEWS_MSG}，属正常终态，不触发补跑"
     exit 0
 fi
 

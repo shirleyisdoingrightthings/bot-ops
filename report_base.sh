@@ -21,7 +21,7 @@ fi
 
 PY="${BOT_PYTHON:-/usr/bin/python3}"
 if [ ! -f "${PLIST:?必须先设置 PLIST}" ]; then
-    echo "ERROR: 找不到 $PLIST，无法加载环境变量" >&2
+    echo "ERROR: 找不到 ${PLIST}，无法加载环境变量" >&2
     exit 1
 fi
 

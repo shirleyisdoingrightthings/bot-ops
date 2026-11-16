@@ -113,7 +113,7 @@ def resolve_archive_task(bot_name: str, archive_path: Path, jsonl_rows: list[dic
                 return None
             report_type = "开盘前瞻" if "开盘前瞻" in text else "收盘复盘"
             session = "premarket" if report_type == "开盘前瞻" else "close"
-        title_override = f"[A股与港股] {date_str} {report_type}"
+        title_override = None
     else:
         m_d = re.match(r"^(\d{4}-\d{2}-\d{2})$", stem)
         date_str = m_d.group(1) if m_d else (extract_report_date(text) or "")

@@ -130,7 +130,7 @@ else
     elif [ -z "$CLAUDE_BIN" ]; then
         log "Level 2 已开启，但本机未安装 claude CLI（只有桌面 App，无法被脚本调用）"
     else
-        log "Level 2：调用 Claude CLI 诊断修复（$CLAUDE_BIN）..."
+        log "Level 2：调用 Claude CLI 诊断修复（${CLAUDE_BIN}）..."
         PROMPT="你是 ${BOT_NAME} 的自动修复代理。主脚本 ${SCRIPT} 今天运行失败。
 失败原因（来自 logs/run.log 的 [FAIL] 行）：
 ${ERROR}

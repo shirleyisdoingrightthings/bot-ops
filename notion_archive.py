@@ -1105,6 +1105,72 @@ def convert_to_blocks(content: str, source: str = "", *, summary_override: str |
     return cleaned_body
 
 
+NOTION_MARKDOWN_VERSION = "2025-09-03"
+TABLE_PAGE_WIDTH_PX = 708
+
+
+def _display_units(text: str) -> int:
+    plain = re.sub(r"<[^>]+>", "", text)
+    plain = re.sub(r"[*`\\]", "", plain).strip()
+    return sum(2 if ord(ch) > 127 else 1 for ch in plain)
+
+
+def _compute_table_col_widths(table_html: str) -> list[int]:
+    """为 Notion table 块计算总宽 708px 的黄金列宽（双列表格如指标/状态采用 196/512）。"""
+    rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table_html, flags=re.S)
+    if not rows:
+        return []
+    first_cells = re.findall(r"<td\b[^>]*>(.*?)</td>", rows[0], flags=re.S)
+    ncols = len(first_cells)
+    if ncols <= 0:
+        return []
+    if ncols == 1:
+        return [TABLE_PAGE_WIDTH_PX]
+    if ncols == 2:
+        col0_max = 0
+        col1_max = 0
+        for row in rows:
+            cells = re.findall(r"<td\b[^>]*>(.*?)</td>", row, flags=re.S)
+            if len(cells) >= 2:
+                col0_max = max(col0_max, _display_units(cells[0]))
+                col1_max = max(col1_max, _display_units(cells[1]))
+        if col0_max <= 30 and col1_max > col0_max:
+            return [196, TABLE_PAGE_WIDTH_PX - 196]
+        return [TABLE_PAGE_WIDTH_PX // 2, TABLE_PAGE_WIDTH_PX - TABLE_PAGE_WIDTH_PX // 2]
+    base = TABLE_PAGE_WIDTH_PX // ncols
+    widths = [base] * ncols
+    widths[-1] += TABLE_PAGE_WIDTH_PX - base * ncols
+    return widths
+
+
+def _build_fit_width_updates(markdown: str) -> list[dict]:
+    """扫描 Notion Markdown v1 表格，构造 fit-page-width='true' + <colgroup> 的 PATCH content_updates。"""
+    updates: list[dict] = []
+    seen_old: set[str] = set()
+    pattern = re.compile(
+        r"(<table\b([^>]*)>)(?:\s*<colgroup>.*?</colgroup>)?(.*?</table>)",
+        flags=re.S,
+    )
+    for m in pattern.finditer(markdown):
+        old_table = m.group(0)
+        raw_attrs = m.group(2) or ""
+        body_and_close = m.group(3)
+        widths = _compute_table_col_widths(old_table)
+        if not widths:
+            continue
+        attrs = ['fit-page-width="true"']
+        if 'header-row="true"' in raw_attrs:
+            attrs.append('header-row="true"')
+        if 'header-column="true"' in raw_attrs:
+            attrs.append('header-column="true"')
+        cols_html = "\n".join(f'<col width="{w}">' for w in widths)
+        new_table = f'<table {" ".join(attrs)}>\n<colgroup>\n{cols_html}\n</colgroup>{body_and_close}'
+        if new_table != old_table and old_table not in seen_old:
+            seen_old.add(old_table)
+            updates.append({"old_str": old_table, "new_str": new_table})
+    return updates
+
+
 def archive_to_notion(
     report_text: str,
     source: str,
@@ -1220,7 +1286,14 @@ def archive_to_notion(
                     parsed[k.lower().strip()] = v.strip()
             return parsed
 
-        def _curl_request(method: str, url: str, body_dict: dict | None = None, timeout: int = 35):
+        def _curl_request(
+            method: str,
+            url: str,
+            body_dict: dict | None = None,
+            timeout: int = 35,
+            *,
+            notion_version: str = NOTION_VERSION,
+        ):
             """LibreSSL 2.8.3 等系统 Python 对 Notion TLS 偶发 EOF 时，回退系统 /usr/bin/curl。"""
             # 优先使用已探测到的可用代理；若已选直连或代理临时失败，顺次尝试 1082 与直连
             candidates: list[str | None] = []
@@ -1248,7 +1321,7 @@ def archive_to_notion(
                         cmd += ["-x", px]
                     cmd += [
                         "-X", method, url,
-                        "-H", f"Notion-Version: {NOTION_VERSION}",
+                        "-H", f"Notion-Version: {notion_version}",
                         "-K", "-",
                         "-D", hdr_tmp_path,
                         "-w", "\n%{http_code}",
@@ -1287,8 +1360,11 @@ def archive_to_notion(
         def _req_with_fallback(method: str, url: str, **kwargs):
             nonlocal session, prefer_curl
             body_dict = kwargs.get("json")
+            notion_version = kwargs.pop("notion_version", NOTION_VERSION)
             if prefer_curl:
-                return _curl_request(method, url, body_dict, timeout=int(kwargs.get("timeout", 30)))
+                return _curl_request(
+                    method, url, body_dict, timeout=int(kwargs.get("timeout", 30)), notion_version=notion_version
+                )
             try:
                 return session.request(method, url, **kwargs)
             except requests.RequestException:
@@ -1300,7 +1376,13 @@ def archive_to_notion(
                 except requests.RequestException:
                     if os.path.exists("/usr/bin/curl"):
                         prefer_curl = True
-                        return _curl_request(method, url, body_dict, timeout=int(kwargs.get("timeout", 30)))
+                        return _curl_request(
+                            method,
+                            url,
+                            body_dict,
+                            timeout=int(kwargs.get("timeout", 30)),
+                            notion_version=notion_version,
+                        )
                     raise
 
         def _parse_retry_after(resp_obj, attempt: int) -> float:
@@ -1328,12 +1410,19 @@ def archive_to_notion(
             json_body: dict | None = None,
             timeout: int = 30,
             max_attempts: int = 4,
+            notion_version: str = NOTION_VERSION,
         ):
             last_err = None
-            req_headers = headers if json_body is not None else {k: v for k, v in headers.items() if k != "Content-Type"}
+            if json_body is not None and notion_version == NOTION_VERSION:
+                req_headers = headers
+            else:
+                req_headers = dict(headers)
+                req_headers["Notion-Version"] = notion_version
+                if json_body is None:
+                    req_headers.pop("Content-Type", None)
             for attempt in range(max_attempts):
                 try:
-                    req_kwargs = {"headers": req_headers, "timeout": timeout}
+                    req_kwargs = {"headers": req_headers, "timeout": timeout, "notion_version": notion_version}
                     if json_body is not None:
                         req_kwargs["json"] = json_body
                     resp_obj = _req_with_fallback(method, url, **req_kwargs)
@@ -1353,6 +1442,49 @@ def archive_to_notion(
                     if attempt + 1 < max_attempts:
                         time.sleep(min(2 ** attempt, 8))
             return None, last_err
+
+        has_tables = any(b.get("type") == "table" for b in blocks)
+
+        def _apply_table_fit_width(target_page_id: str) -> None:
+            if not has_tables or not target_page_id:
+                return
+            try:
+                updates: list[dict] = []
+                for idx in range(2):
+                    time.sleep(0.35 if idx == 0 else 0.7)
+                    m_resp, m_err = _request_with_retry(
+                        "GET",
+                        f"https://api.notion.com/v1/pages/{target_page_id}/markdown",
+                        timeout=30,
+                        notion_version=NOTION_MARKDOWN_VERSION,
+                    )
+                    if m_resp is None or m_resp.status_code >= 400:
+                        print(
+                            f"  [WARN] Notion 读取表格 Markdown 失败 ({target_page_id}): {m_err or getattr(m_resp, 'text', '')[:200]}",
+                            file=sys.stderr,
+                        )
+                        return
+                    md = (m_resp.json() or {}).get("markdown") or ""
+                    updates = _build_fit_width_updates(md)
+                    if "<table" in md:
+                        break
+                if not updates:
+                    return
+                time.sleep(0.35)
+                u_resp, u_err = _request_with_retry(
+                    "PATCH",
+                    f"https://api.notion.com/v1/pages/{target_page_id}/markdown",
+                    json_body={"type": "update_content", "update_content": {"content_updates": updates}},
+                    timeout=30,
+                    notion_version=NOTION_MARKDOWN_VERSION,
+                )
+                if u_resp is None or u_resp.status_code >= 400:
+                    print(
+                        f"  [WARN] Notion 表格自适应宽度设置未生效 ({target_page_id}): {u_err or getattr(u_resp, 'text', '')[:200]}",
+                        file=sys.stderr,
+                    )
+            except Exception as exc:
+                print(f"  [WARN] Notion 表格自适应宽度异常 ({target_page_id}): {exc}", file=sys.stderr)
 
         def _append_chunk_list(target_page_id: str, chunks: list[list[dict]]) -> tuple[bool, list[str], str]:
             created_ids: list[str] = []
@@ -1422,6 +1554,7 @@ def archive_to_notion(
                 if not app_ok:
                     return False, f"Notion 后续区块追加失败 ({page_url}): {app_err}"
 
+            _apply_table_fit_width(page_id)
             return True, page_url
 
         # 分支 B：已存在同日同信源同类型记录 -> 保留最新一条原地覆盖，保留 Comments 与 URL，先追加后删除
@@ -1506,6 +1639,7 @@ def archive_to_notion(
                     file=sys.stderr,
                 )
 
+        _apply_table_fit_width(page_id)
         return True, page_url
     except Exception as e:
         return False, f"Notion 同步异常: {str(e)}"

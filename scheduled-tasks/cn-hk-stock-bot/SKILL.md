@@ -31,7 +31,7 @@ bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch close
 - `=== SKIP_EXPIRED ===`：`premarket` 运行时刻已超过 10:00（开盘已过，未设 `FORCE_RUN=1`）。**立即停止，不要写稿或发送**，记「已过 10:00 开盘前瞻窗口，自动跳过」。
 - `=== SKIP_ALREADY_RAN ===`：本场次今天已推送过。记「已跳过」。
 - `=== SKIP_NON_TRADING_DAY ===` / `=== SKIP_NO_DATA ===`：非交易日或行情全缺。**不要继续**，记原因并结束。
-- `=== FETCH_OK ===`：使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/last_context.txt`，进入步骤 2。
+- `=== FETCH_PREMARKET_OK ===` 或 `=== FETCH_CLOSE_OK ===`：使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/last_context.txt`，进入步骤 2。
 
 ### 步骤 2 — 写两稿（A股 + 港股）
 1. 若为 `premarket`（09:00 开盘前瞻），使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/prompt_premarket.md`；
