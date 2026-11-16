@@ -102,17 +102,21 @@ def resolve_archive_task(bot_name: str, archive_path: Path, jsonl_rows: list[dic
     report_type = "日报"
 
     if bot_name == "cn-hk-stock-bot":
-        m_cn = re.match(r"^(\d{4}-\d{2}-\d{2})_(premarket|close)$", stem)
+        m_cn = re.match(r"^(\d{4}-\d{2}-\d{2})_(premarket|midday|close)$", stem)
         if m_cn:
             date_str, session = m_cn.group(1), m_cn.group(2)
-            report_type = "开盘前瞻" if session == "premarket" else "收盘复盘"
+            report_type = {"premarket": "开盘前瞻", "midday": "午间复盘", "close": "收盘复盘"}[session]
         else:
             m_d = re.match(r"^(\d{4}-\d{2}-\d{2})$", stem)
             date_str = m_d.group(1) if m_d else (extract_report_date(text) or "")
             if not date_str:
                 return None
-            report_type = "开盘前瞻" if "开盘前瞻" in text else "收盘复盘"
-            session = "premarket" if report_type == "开盘前瞻" else "close"
+            if "开盘前瞻" in text:
+                report_type, session = "开盘前瞻", "premarket"
+            elif "早盘总结" in text or "午间复盘" in text:
+                report_type, session = "午间复盘", "midday"
+            else:
+                report_type, session = "收盘复盘", "close"
         title_override = None
     else:
         m_d = re.match(r"^(\d{4}-\d{2}-\d{2})$", stem)

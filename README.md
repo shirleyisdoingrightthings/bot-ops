@@ -11,13 +11,16 @@ Daily Scheduled Automations (Asia/Shanghai)
   │                           └─ X Hotspot Bot (48h AINews + Techmeme, single top-cited x.com link)
   │
   ├─ 09:00 CST (Mon–Fri) ─▶ cn-hk-premarket
-  │                           └─ A-Share & HK Premarket Outlook (skips if > 10:00 via === SKIP_EXPIRED ===)
+  │                           └─ A-Share & HK Premarket Outlook (09:00–10:00 only; skips if > 10:00 via === SKIP_EXPIRED ===)
   │
   ├─ 09:30 CST (Daily)   ─▶ github-hn-morning
   │                           └─ GitHub Trending (Mon–Sat Daily / Sun Weekly) & Hacker News Top 8
   │
   ├─ 10:00 CST (Tue–Sat) ─▶ morning-catchup-daily-bots
   │                           └─ US Stock Close & 24h Crypto Daily Bot
+  │
+  ├─ 12:05 CST (Mon–Fri) ─▶ cn-hk-midday
+  │                           └─ A-Share & HK Morning Close + Afternoon Outlook (12:00–13:00 only; skips if premarket already sent today)
   │
   ├─ 15:00 CST (Daily)   ─▶ ai-daily-afternoon (Sequential Execution)
   │                           ├─ Part A: AI Daily News Bot (Daily every day; no Sunday weekly review)

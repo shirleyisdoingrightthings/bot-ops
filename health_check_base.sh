@@ -108,9 +108,9 @@ _today_log_lines() {
     local lines
     lines=$(grep "^$TODAY" "$LOG" 2>/dev/null || true)
     if [ "${SESSION_FILTER:-}" = "close" ]; then
-        printf '%s\n' "$lines" | grep -Ev '(\(premarket\)|（premarket）|开盘前瞻)' | grep -E '(\(close\)|（close）|收盘复盘| (1[6-9]|2[0-3]):)' || true
+        printf '%s\n' "$lines" | grep -Ev '(\(premarket\)|（premarket）|开盘前瞻|\(midday\)|（midday）|午间|早盘总结)' | grep -E '(\(close\)|（close）|收盘复盘| (1[6-9]|2[0-3]):)' || true
     elif [ "${SESSION_FILTER:-}" = "premarket" ]; then
-        printf '%s\n' "$lines" | grep -Ev '(\(close\)|（close）|收盘复盘)' | grep -E '(\(premarket\)|（premarket）|开盘前瞻| (0[0-9]|1[0-5]):)' || true
+        printf '%s\n' "$lines" | grep -Ev '(\(close\)|（close）|收盘复盘)' | grep -E '(\(premarket\)|（premarket）|开盘前瞻|\(midday\)|（midday）|午间|早盘总结| (0[0-9]|1[0-5]):)' || true
     else
         printf '%s\n' "$lines"
     fi

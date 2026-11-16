@@ -277,7 +277,7 @@ def _extract_cn_hk_market_brief(
         else:
             if not indices_str and re.match(r"^核心指数", clean_line):
                 indices_str = clean_line
-            elif line.startswith("🧭 市场宽度"):
+            elif line.startswith(("🧭 市场宽度", "🧭 早盘宽度")):
                 if "—" in line:
                     width_str = line.split("—", 1)[1].strip()
                 elif "：" in line:
@@ -296,9 +296,9 @@ def _extract_cn_hk_market_brief(
                     losers.append(item)
             elif mode_section == "signal" and not signal_str and not line.lstrip("·•-* ").strip().startswith(("💡", "👀", "🚨")):
                 cand = line.lstrip("·•-* ").strip()
-                if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?信号灯", cand) or cand.startswith(("🟢", "🟡", "🔴")):
+                if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?(?:早盘|午间)?信号灯", cand) or cand.startswith(("🟢", "🟡", "🔴")):
                     sig = re.split(r"\s*[—–]\s*", cand, maxsplit=1)[0].strip()
-                    signal_str = re.sub(r"^(?:🚦\s*)?信号灯(?:状态)?[:：]\s*", "信号灯：", sig)
+                    signal_str = re.sub(r"^(?:🚦\s*)?(?:早盘|午间)?信号灯(?:状态)?[:：]\s*", "信号灯：", sig)
 
     parts = []
     if include_signal and signal_str:
@@ -392,7 +392,7 @@ def _extract_summary_bullets(section_text: str) -> list[str]:
 def extract_summary(text: str, source: str = "") -> str:
     """从稿件中抽取 30 秒速览或完整结构化要点（金融市场报告首部直出信号灯，保证绝不半句截断）"""
     # 1. A股与港股：信号灯置于 30 秒速览最开头，随后分别呈现 A股 + 港股 核心数据与看点
-    if "A股与港股" in source or ("A股开盘前瞻" in text or "A股收盘复盘" in text):
+    if "A股与港股" in source or any(k in text for k in ("A股开盘前瞻", "A股早盘总结", "A股午间复盘", "A股收盘复盘")):
         secs = re.split(r"\n\s*---+\s*\n", text, maxsplit=1)
         is_pre = ("开盘前瞻" in text)
         cn_sig = extract_market_signal(secs[0], source="A股与港股")
@@ -518,7 +518,7 @@ def extract_market_signal(text: str, source: str = "") -> str | None:
                 continue
             if plain.startswith(("💡", "👀", "🚨")):
                 continue
-            if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?(?:早盘)?信号灯(?:状态)?[:：\s]", plain):
+            if re.match(r"^(?:(?:🟢|🟡|🔴|🚦)\s*)?(?:早盘|午间)?信号灯(?:状态)?[:：\s]", plain):
                 sec_sig = _classify_signal_line(plain)
                 if sec_sig:
                     break
@@ -550,7 +550,7 @@ def build_clean_title(source: str, date_str: str, report_type: str = "日报") -
     if "美股" in source:
         return f"{date_str} 美股收盘 & 加密行情"
     if "A股与港股" in source:
-        suffix = report_type if report_type in ("开盘前瞻", "收盘复盘") else "决策复盘"
+        suffix = report_type if report_type in ("开盘前瞻", "午间复盘", "收盘复盘") else "决策复盘"
         return f"{date_str} A股&港股 {suffix}"
     if "AI 产业日报" in source:
         return f"{date_str} AI 产业日报"
@@ -805,10 +805,10 @@ def convert_to_blocks(content: str, source: str = "", *, summary_override: str |
             return True
         return bool(
             re.match(
-                r"^(?:🌅\s*)?(?:📊\s*美股收盘|📋\s*(?:AI\s*产业日报|美股要闻)|🐙\s*GitHub|🔥\s*X\s*热点|🛠️?\s*AI\s*Builder|🇨🇳\s*A股(?:开盘前瞻|收盘复盘)|🇭🇰\s*港股(?:开盘前瞻|收盘复盘))",
+                r"^(?:🌅\s*|☀️\s*)?(?:📊\s*美股收盘|📋\s*(?:AI\s*产业日报|美股要闻)|🐙\s*GitHub|🔥\s*X\s*热点|🛠️?\s*AI\s*Builder|🇨🇳\s*A股(?:开盘前瞻|早盘总结|午间复盘|收盘复盘)|🇭🇰\s*港股(?:开盘前瞻|早盘总结|午间复盘|收盘复盘))",
                 p_no_b,
             )
-            and ((raw_l.startswith("<b>") and raw_l.endswith("</b>")) or raw_l.startswith(("📋", "📊", "🌅", "🇨🇳", "🇭🇰")))
+            and ((raw_l.startswith("<b>") and raw_l.endswith("</b>")) or raw_l.startswith(("📋", "📊", "🌅", "☀️", "🇨🇳", "🇭🇰")))
         )
 
     i = 0

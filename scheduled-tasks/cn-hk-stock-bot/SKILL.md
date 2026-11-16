@@ -1,13 +1,17 @@
 ---
 name: cn-hk-stock-bot
-description: 周一至周五早 09:00（开盘前瞻，过 10:00 自动跳过）与下午 16:15（收盘复盘）自动抓取 A股 & 港股行情、均线乖离率、动态领涨/领跌板块与 7x24 电报，分别推送至 A股 与 港股 飞书机器人
+description: 周一至周五早 09:00（开盘前瞻，09:00–10:00 有效，过 10:00 自动跳过）、午间 12:05（早盘收盘总结 & 午后前瞻，仅在 12:00–13:00 有效且当早未发过开盘前瞻时缺早补午）与下午 16:15（收盘复盘）自动抓取 A股 & 港股行情、均线乖离率、动态领涨/领跌板块与 7x24 电报，分别推送至 A股 与 港股 飞书机器人
 ---
 
-目标：基于 `ZhuLinsen/daily_stock_analysis` 的决策仪表盘与均线乖离率趋势诊断理念，在周一至周五两个关键时点分别向飞书群里的「A股机器人」和「港股机器人」推送报告：
+目标：基于 `ZhuLinsen/daily_stock_analysis` 的决策仪表盘与均线乖离率趋势诊断理念，在周一至周五关键时点分别向飞书群里的「A股机器人」和「港股机器人」推送报告：
 
 - **模型识别与自主 Orchestrate 原则**：主会话直接识别并运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据盘面分析复杂度自行决定直接由当前模型撰写 A/H 两稿，或通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 并行/分流委派给快速响应/轻量化模型处理（若委派子代理，主 Agent 须在 `send` 前完成数值口径与排版校验）。
-1. **早 09:00（`premarket` 开盘前瞻）**：赶在 09:15 A股集合竞价与 09:30 A/H股开盘前，汇总隔夜美股/中概股 ADR 涨跌映射、昨日收盘技术锚点与早间 7x24 财经电报，输出《🇨🇳 A股开盘前瞻》与《🇭🇰 港股开盘前瞻》。**时效硬门禁：若开机或运行时间已过 `10:00`（本地时间），`fetch premarket` 会输出 `=== SKIP_EXPIRED ===` 并直接退出，避免盘中过晚推送开盘前策略。**
-2. **下午 16:15（`close` 收盘复盘）**：在 15:00 A股收盘、16:00 港股收盘后，汇总全天指数、两市成交额、MA5/MA20 均线乖离率、动态计算领涨/领跌 Top 3 板块与板块内 Top 3 个股及当日电报催化，输出《🇨🇳 A股收盘复盘》与《🇭🇰 港股收盘复盘》。
+1. **早 09:00（`premarket` 开盘前瞻）**：赶在 09:15 A股集合竞价与 09:30 A/H股开盘前，汇总隔夜美股/中概股 ADR 涨跌映射、昨日收盘技术锚点与早间 7x24 财经电报，输出《🇨🇳 A股开盘前瞻》与《🇭🇰 港股开盘前瞻》。**时效硬门禁：仅在 `09:00–10:00` 有效；若开机或运行时间已过 `10:00`（本地时间），`fetch premarket` 会输出 `=== SKIP_EXPIRED ===` 并直接退出，严禁写稿或发送。**
+2. **午 12:05（`midday` 午间缺早补午：早盘收盘总结 & 午后前瞻）**：在 A股（11:30）与港股（12:00）早盘均休市后、13:00 午盘开盘前，**仅作为早盘错过时的补位**：
+   - **时效硬门禁**：仅在 `12:00–13:00` 有效，过 `13:00`（或早于 `12:00`）输出 `=== SKIP_EXPIRED ===` 并直接退出；
+   - **缺早补午门禁**：若当天 `09:00` 的 `premarket` 已成功发送（`logs/run.log` 有当天 `[OK]` 且含 `(premarket)`），`fetch midday` 会输出 `=== SKIP_PREMARKET_ALREADY_RAN ===` 并自动跳过不重复打扰。
+   - 若放行（`=== FETCH_MIDDAY_OK ===`），则依据早盘收盘行情、半日量能、动态领涨/领跌 Top 3 板块及早间至午间电报，按 `prompt_midday.md` 输出《☀️ 🇨🇳 A股早盘总结 & 午后前瞻》与《☀️ 🇭🇰 港股早盘总结 & 午后前瞻》。
+3. **下午 16:15（`close` 收盘复盘）**：在 15:00 A股收盘、16:00 港股收盘后，汇总全天指数、两市成交额、MA5/MA20 均线乖离率、动态计算领涨/领跌 Top 3 板块与板块内 Top 3 个股及当日电报催化，输出《🇨🇳 A股收盘复盘》与《🇭🇰 港股收盘复盘》。
 
 ⚠️ **三大执行与排版铁律：**
 1. **防截断**：执行 `fetch` 后，完整输出已自动落盘到 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/last_context.txt`。请直接使用 `read_file` 读取 `logs/last_context.txt`，严禁重复执行 `fetch`。
@@ -21,20 +25,24 @@ description: 周一至周五早 09:00（开盘前瞻，过 10:00 自动跳过）
 ## 执行步骤
 
 ### 步骤 1 — 抓取
-根据当前运行场次（09:00 传 `premarket`，16:15 传 `close`）执行（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
+根据当前运行场次（09:00 传 `premarket`，12:05 传 `midday`，16:15 传 `close`）执行（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
 ```bash
 bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch premarket
+# 或 12:05 午间缺早补午场次：
+bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch midday
 # 或 16:15 收盘场次：
 bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch close
 ```
 按 stdout 标记决定：
-- `=== SKIP_EXPIRED ===`：`premarket` 运行时刻已超过 10:00（开盘已过，未设 `FORCE_RUN=1`）。**立即停止，不要写稿或发送**，记「已过 10:00 开盘前瞻窗口，自动跳过」。
+- `=== SKIP_EXPIRED ===`：`premarket` 不在 `09:00–10:00` 或 `midday` 不在 `12:00–13:00` 有效窗口内（未设 `FORCE_RUN=1`）。**立即停止，不要写稿或发送**，如实汇报跳过原因。
+- `=== SKIP_PREMARKET_ALREADY_RAN ===`：今天 `09:00` 的 `premarket` 已正常推送，`midday` 午间场跳过不重复打扰。**立即停止，不要写稿或发送**，记「今日早盘前瞻已发，午间缺早补午自动跳过」。
 - `=== SKIP_ALREADY_RAN ===`：本场次今天已推送过。记「已跳过」。
 - `=== SKIP_NON_TRADING_DAY ===` / `=== SKIP_NO_DATA ===`：非交易日或行情全缺。**不要继续**，记原因并结束。
-- `=== FETCH_PREMARKET_OK ===` 或 `=== FETCH_CLOSE_OK ===`：使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/last_context.txt`，进入步骤 2。
+- `=== FETCH_PREMARKET_OK ===`、`=== FETCH_MIDDAY_OK ===` 或 `=== FETCH_CLOSE_OK ===`：使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/last_context.txt`，进入步骤 2。
 
 ### 步骤 2 — 写两稿（A股 + 港股）
 1. 若为 `premarket`（09:00 开盘前瞻），使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/prompt_premarket.md`；
+   若为 `midday`（12:05 早盘总结 & 午后前瞻），使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/prompt_midday.md`；
    若为 `close`（16:15 收盘复盘），使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/prompt_close.md`。
 2. 严格按对应规范写出两份纯正文（仅使用 `<b>` 加粗标签，严禁使用 Markdown `**`）：
    - 使用 `write_file`（`Overwrite: true`）将 A 股报告写入 `/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/report_cn.txt`
@@ -45,7 +53,7 @@ bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" fetch close
 ```bash
 bash "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/claude_report.sh" send
 ```
-该命令会自动从 `fetch_meta.json` 识别本次场次（`premarket` / `close`），将 `report_cn.txt` 推送至 `FEISHU_WEBHOOK_CN`（A股 Bot），将 `report_hk.txt` 推送至 `FEISHU_WEBHOOK_HK`（港股 Bot），并按场次分别归档至 Notion。
+该命令会自动从 `fetch_meta.json` 识别本次场次（`premarket` / `midday` / `close`），将 `report_cn.txt` 推送至 `FEISHU_WEBHOOK_CN`（A股 Bot），将 `report_hk.txt` 推送至 `FEISHU_WEBHOOK_HK`（港股 Bot），并按场次分别归档至 Notion。
 
 ### 步骤 4 — 核对
-`tail -1 "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/run.log"` 确认出现 `[OK]`（带 `(premarket)` 或 `(close)` 场次标识）。
+`tail -1 "/Users/jialiwu/.gemini/bots/cn-hk-stock-bot/logs/run.log"` 确认出现 `[OK]`（带 `(premarket)`、`(midday)` 或 `(close)` 场次标识）。
