@@ -1,16 +1,16 @@
 ---
 name: x-hotspot-morning
-description: 每天早 08:30 抓取过去 48 小时 Latent Space AINews（Twitter Recap）与 Techmeme 同期报道，提炼 1–4 个 X 圈真实技术/产品分歧并推送至飞书
+description: 每天早 09:00 抓取过去 48 小时 Latent Space AINews（Twitter Recap）与 Techmeme 同期报道，提炼 1–4 个 X 圈真实技术/产品分歧并推送至飞书
 ---
 
-目标：每天早上 08:30（独立于下午 `ai-daily-afternoon`，覆盖隔夜美国时间更新的 Latent Space `[AINews]` Twitter Recap），提炼「AI 圈昨天深夜到今天凌晨在吵什么」，给出「有人说 A、也有人说 B」的分歧拆解并推送到飞书（与 `AI Daily News Bot` 共用同一个飞书 webhook）。
+目标：每天早上 09:00（独立于 `ai-daily-afternoon`，覆盖隔夜美国时间更新的 Latent Space `[AINews]` Twitter Recap），提炼「AI 圈昨天深夜到今天凌晨在吵什么」，给出「有人说 A、也有人说 B」的分歧拆解并推送到飞书（与 `AI Daily News Bot` 共用同一个飞书 webhook）。
 
 - **模型识别与自主 Orchestrate 原则**：主会话直接识别并运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据当天话题复杂度与信息密度自行决定由当前模型直接完成，或将适合轻量化的子任务通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 委派给快速响应/轻量化模型处理（委派时主 Agent 须在 `send` 前完成原帖链接与事实准确性核验）。
 
-**时间线**：每天 08:30 触发（主力）→ 09:30 由 `com.shirley.x-hotspot-bot-health` 执行轻量化健康检查（方案 B：不再拉起无头 CLI；若关机/休眠错过 08:30，开机唤醒后由 Antigravity Sidecar 自动补跑）。
+**时间线**：每天 09:00 触发（主力）→ 09:30 由 `com.shirley.x-hotspot-bot-health` 执行轻量化健康检查（方案 B：不再拉起无头 CLI；若关机/休眠错过 09:00，开机唤醒后由 Antigravity Sidecar 自动补跑）。
 
 **素材窗口与体例（48 小时窗口）**：
-- 主素材来自 `latent.space/feed` 的最新一期 `[AINews]` 邮件复盘（`news.smol.ai` 已停服退居末位兜底），`DEFAULT_WINDOW_H = 48`（次早 08:30 稳定覆盖前一美股工作日夜间发表的新刊）；
+- 主素材来自 `latent.space/feed` 的最新一期 `[AINews]` 邮件复盘（`news.smol.ai` 已停服退居末位兜底），`DEFAULT_WINDOW_H = 48`（次早 09:00 稳定覆盖前一美股工作日夜间发表的新刊）；
 - AINews 常见体例是「每天只挑一两个最大的事件往深里扒」，**话题数量控制在 1–4 条**：单话题日专注深扒 1 条，多话题日选最热的 2–4 条，切勿为了凑数硬拼边角料；
 - `=== TECHMEME_BEGIN/END ===` 仅作主媒对照，判断话题是否只是小圈层热议；对照不上就整块不用，不硬塞新闻。
 

@@ -1,11 +1,11 @@
 # Bots 工作区全局记忆与执行规范
 
 1. **仓库结构（均同步至 `git@github.com:shirleyisdoingrightthings/`）**：
-   - `x-hotspot-bot`（`x-hotspot-bot.git`）：X 热点分歧播报（**每日早 08:30** 独立运行，48h 窗口；每条话题末尾**仅保留被引用次数最多的 1 条 `x.com` 原帖直链**）。
+   - `x-hotspot-bot`（`x-hotspot-bot.git`）：X 热点分歧播报（**每日早 09:00** 独立运行，48h 窗口；每条话题末尾**仅保留被引用次数最多的 1 条 `x.com` 原帖直链**）。
    - `cn-hk-stock-bot`：A股 & 港股智能决策日报（周一至周五 09:00 `premarket` 开盘前瞻，**超过 10:00 自动跳过**；16:15 `close` 收盘复盘）。
    - `github-hn-bot`：GitHub Trending（周一至周六 Daily / 周日 Weekly 全局唯一周趋势回顾）+ Hacker News Top 8 大白话早报（每日 09:30）。
    - `us stock bot`（`us-stock-bot.git`）：美股收盘 & 24h 加密行情合盘日报（每周二至周六 10:00；独立 `crypto daily bot` 已退役停跑）。
-   - `AI Daily News Bot`（`AI-Daily-News-Bot.git`）：每日 15:00 统一出《AI 产业日报》（`FETCH_OK`；已永久取消周日周回顾）。
+   - `AI Daily News Bot`（`AI-Daily-News-Bot.git`）：每日 09:00 统一出《AI 产业日报》（`FETCH_OK`；已永久取消周日周回顾）。
    - `ai-builder-bot`（`ai-builder-bot.git`）：基于 `.venv` Python 3.12 + `twscrape` 直连抓取自建 X List（已彻底移除 `follow-builders`、5 路个人博客 RSS 及 `EXTRA_BUILDERS` 白名单）。
    - `shared`（`bot-ops.git`）：共享工具 `bot_utils.py`、统一脚本入口 `report_base.sh`、Notion 归档 `notion_archive.py`、轻量化健康检查与 Level 1 重发保护（`*_base.sh`）及 `scheduled-tasks/` 定义。
 2. **模型调度与健康检查（方案 B）**：

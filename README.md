@@ -7,7 +7,7 @@ Shared runtime utilities, scheduling definitions, lightweight health checks, and
 ```text
 Daily Scheduled Automations (Asia/Shanghai)
   │
-  ├─ 08:30 CST (Daily)   ─▶ x-hotspot-morning
+  ├─ 09:00 CST (Daily)   ─▶ x-hotspot-morning
   │                           └─ X Hotspot Bot (48h AINews + Techmeme, single top-cited x.com link)
   │
   ├─ 09:00 CST (Mon–Fri) ─▶ cn-hk-premarket
@@ -22,7 +22,7 @@ Daily Scheduled Automations (Asia/Shanghai)
   ├─ 12:05 CST (Mon–Fri) ─▶ cn-hk-midday
   │                           └─ A-Share & HK Morning Close + Afternoon Outlook (12:00–13:00 only; skips if premarket already sent today)
   │
-  ├─ 15:00 CST (Daily)   ─▶ ai-daily-afternoon (Sequential Execution)
+  ├─ 09:00 CST (Daily)   ─▶ ai-daily-afternoon (Sequential Execution)
   │                           ├─ Part A: AI Daily News Bot (Daily every day; no Sunday weekly review)
   │                           └─ Part B: AI Builder Bot
   │

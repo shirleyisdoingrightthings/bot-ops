@@ -1,20 +1,20 @@
 ---
 name: ai-daily-afternoon
-description: 每天 15:00 写稿并推送 AI 产业日报与 AI Builder 日报（识别 Automation 选定模型并允许自主 Orchestrate；X 热点已拆至每天早 08:30 独立运行）
+description: 每天 09:00 写稿并推送 AI 产业日报与 AI Builder 日报（识别 Automation 选定模型并允许自主 Orchestrate；X 热点同样在每天早 09:00 独立运行）
 ---
 
-目标：AI 下午两块内容由本任务每天 15:00 串行完成抓取、写稿与飞书推送：
+目标：AI 日报与 AI Builder 两块内容由本任务每天 09:00 串行完成抓取、写稿与飞书推送：
 1. **A：AI 产业日报**（媒体报道了什么 —— **每日统一出《AI 产业日报》，已永久取消周日周回顾**）
-2. **B：AI Builder 日报**（一线研究员 / 创始人 / 工程师本人发了什么与长文）
+2. **B：AI Builder 日报**（自建 X List 中一线研究员 / 创始人 / 工程师本人发了什么）
 
 - **模型识别与自主 Orchestrate 原则**：主会话直接识别并运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据当天内容复杂度自行决定由当前主模型直接完成，或通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 将常规整理、初稿起草等适合轻量化的环节委派给快速响应/轻量化子代理协同处理（若委派子代理写稿，主 Agent 须在 `send` 前完成核心事实、超链接与排版把关）。
 
 > **⚠️ 分工与独立调度说明：**
-> - 《X 热点播报》已移至每天早 **08:30** 的 `x-hotspot-morning` 任务独立运行（48h 窗口），**本任务不要再去跑 `x-hotspot-bot`**。
+> - 《X 热点播报》已在每天早 **09:00** 的 `x-hotspot-morning` 任务独立运行（48h 窗口），**本任务不要再去跑 `x-hotspot-bot`**。
 > - 《美股收盘 & 加密行情日报》在 `morning-catchup-daily-bots`（周二至周六 10:00）、《A股 & 港股》在 `cn-hk-*`、《GitHub & HN》在 `github-hn-morning`（09:30），**均与本任务无关**。
 > - 本任务两块内容发往同一个飞书 webhook（「AI 产业日报」机器人），但拥有各自独立的脚本、去重档案与 `run.log`。**必须先写 A（产业日报）再写 B（AI Builder）**，写 AI Builder 时主动避开重复。
 
-**时间线**：每天 15:00 触发（主力）→ 16:00 由 `com.shirley.ai-chain-health` 串行检查 `AI Daily News Bot` 与 `ai-builder-bot` 两块运行状态（方案 B：仅核查状态与 `drafts_fresh` 本地重发兜底，不拉起无头 CLI；开机唤醒补跑由 Antigravity Sidecar 自行负责）。
+**时间线**：每天 09:00 触发（主力）→ 16:00 由 `com.shirley.ai-chain-health` 串行检查 `AI Daily News Bot` 与 `ai-builder-bot` 两块运行状态（方案 B：仅核查状态与 `drafts_fresh` 本地重发兜底，不拉起无头 CLI；开机唤醒补跑由 Antigravity Sidecar 自行负责）。
 
 工作根目录是 `/Users/jialiwu/.gemini/bots`，共享层在 `/Users/jialiwu/.gemini/bots/shared/`。
 
@@ -63,7 +63,7 @@ bash "/Users/jialiwu/.gemini/bots/AI Daily News Bot/claude_report.sh" send
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ## 第二部分之 B：AI Builder 日报（写 1 稿）
 
-本块播的是 **X 上一线 AI builder 本人最近说了什么与技术长文**，与产业日报「媒体报道了什么」严格分工。排在 A 之后写，主动避开重复或补充一线本人视角。
+本块播的是 **自建 X List 上一线 AI builder 本人最近说了什么**，与产业日报「媒体报道了什么」严格分工。排在 A 之后写，主动避开重复或补充一线本人视角。
 
 ### 步骤 1 — 取材
 执行命令（若遇沙盒配置报错或拦截网络/本地代理 `127.0.0.1:1082`，请使用 `BypassSandbox: true`）：
@@ -73,20 +73,20 @@ bash "/Users/jialiwu/.gemini/bots/ai-builder-bot/claude_report.sh" fetch
 按 stdout 标记决定：
 - `=== SKIP_ALREADY_RAN ===`：今天已推送过。记「已跳过」，进入汇报。
 - `=== SKIP_PROXY ===`：本地代理不可用。**不要继续**，记「代理不可用未推送」。
-- `=== FEED_ERROR ===`：上游 feed 拉不到。**不要继续**，记「素材源不可用未推送」并附错误。
-- `=== NO_TWEETS ===`：feed 里没有新推文。**不要继续**，记「无可用素材」。
+- `=== FEED_ERROR ===`：X List 拉取失败或 Cookie 失效。**不要继续**，记「素材源不可用未推送」并附错误。
+- `=== NO_TWEETS ===`：X List 过去 24h 窗口内没有新推文。**不要继续**，记「无可用素材」。
 - `=== FETCH_OK ===`：使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/ai-builder-bot/logs/last_context.txt`，提取 `=== CONTEXT_BEGIN ===` 与 `=== CONTEXT_END ===` 之间内容，进入步骤 2。
 
-**⚠️ 关于 feed 与推文时间区间：**
-- 上游 `follow-builders` CI 在北京时间 **14:17** 生成，我们 15:00 取正常滞后约 45 分钟；若某天延迟仍可能是前一天数据。
-- **稿子开头必须按 context 里的「推文实际时间区间」如实写明日期**，若出现 `=== FEED_STALE ===` 滞后超过 36 小时需在汇报中标注。
+**⚠️ 关于 X List 与推文时间区间：**
+- 本块直接通过 `twscrape` 拉取自建 X List 过去 24 小时的最新推文（无上游 CI 滞后）。
+- **稿子开头必须按 context 里的「推文实际时间区间」如实写明日期**。
 
 ### 步骤 2 — 写稿
 1. 使用 `read_file` 读取 `/Users/jialiwu/.gemini/bots/ai-builder-bot/prompt.md`。
 2. 严格按其全部规则写出完整《AI Builder 日报》：
-   - 正文中提到的每一家机构、研究者或 `@handle` 只要素材给出对应链接，必须在正文点名处直接加 `<a href="URL">...</a>` 超链接；每条话题末尾另保留 `[原推]` / `[长文]` 汇总直链（`send` 仍要求全文至少包含 1 条 `x.com` 原推链接）；
+   - 正文中提到的每一家机构、研究者或 `@handle` 只要素材给出对应链接，必须在正文点名处直接加 `<a href="URL">...</a>` 超链接；每条话题末尾另保留 `原推：` 汇总直链（`send` 仍要求全文至少包含 1 条 `x.com` 原推链接）；
    - 赞/转/回是 X 上真实互动量，可照实写；
-   - 开头第一行写明这批推文的实际日期；文末数据注脚标明覆盖条数（含博客长文数时写 `+ {N} 篇长文`）；
+   - 开头第一行写明这批推文的实际日期；文末数据注脚格式为 `<b>素材</b>：X List（{builder 数} 位 · {推文数} 条）· 覆盖 {时间区间}`；
    - 只用 `<b>` 和 `<a href>` 标签；英文人名、handle、公司名、模型名不翻译。
 3. 使用 `write_file`（`Overwrite: true`）将纯正文写入 `/Users/jialiwu/.gemini/bots/ai-builder-bot/logs/report_draft.txt`。
 

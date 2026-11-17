@@ -9,7 +9,7 @@ description: 每周二至周六早 10:00 写稿并推送《美股收盘 & 加密
 
 ⚠️ **重要变更说明：**
 1. **2026-11 起独立 Crypto 日报已退役并合并：** 加密货币不再抓取新闻，仅保留核心币价（BTC / ETH / SOL / BNB / XRP / HYPE）、全球加密市值、BTC 市占率与恐惧贪婪指数，并已直接内嵌到 `us stock bot` 的消息①（收盘仪表盘）中。**独立 `crypto daily bot` 已下线归档，切勿再去运行。**
-2. **其他时段调度不在此任务：** `x-hotspot-morning` 在早 08:30、`cn-hk-*` 在工作日 09:00/16:15、`github-hn-morning` 在早 09:30、`ai-daily-afternoon` 在下午 15:00 运行，**本任务只跑 `us stock bot`**。
+2. **其他时段调度不在此任务：** `x-hotspot-morning` 在早 09:00、`cn-hk-*` 在工作日 09:00/16:15、`github-hn-morning` 在早 09:30、`ai-daily-afternoon` 在早 09:00 运行，**本任务只跑 `us stock bot`**。
 
 **时间线**：每周二至周六 10:00 触发（主力）→ 11:00 `com.shirley.us-stock-bot-health` 执行轻量化健康检查（方案 B：不再拉起无头 CLI；仅当本地草稿已生成且新鲜 `drafts_fresh` 时执行 Level 1 非 AI 重发；关机/休眠错过 10:00 时由 Antigravity Sidecar 开机唤醒补跑）。
 

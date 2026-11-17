@@ -14,7 +14,7 @@ set -uo pipefail
 cd "${DIR:?必须先设置 DIR}" || exit 1
 
 MODE="${1:-}"
-if [ "$MODE" != "fetch" ] && [ "$MODE" != "send" ]; then
+if [ "$MODE" != "fetch" ] && [ "$MODE" != "send" ] && [ "$MODE" != "test-list" ] && [ "$MODE" != "archive-only" ]; then
     echo "ERROR: 用法 ${USAGE_MSG:-claude_report.sh fetch|send}" >&2
     exit 2
 fi
