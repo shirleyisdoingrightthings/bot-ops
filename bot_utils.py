@@ -1137,6 +1137,7 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
     # 一并记入去重档案，确保同一期 AINews 不会被跨天重复播报。
     issue_urls = meta.get("metrics", {}).get("issue_urls", []) or []
     total = record_sent_urls(sent_urls, x_links + list(issue_urls))
+    record_daily_ledger(source_name, report, hrefs, date_str=doc_date)
     print(f"  ✓ 已归档 {len(x_links)} 条{link_label}链接"
           f"{f' + {len(issue_urls)} 条期刊链接' if issue_urls else ''}用于跨天去重（档案共 {total} 条）",
           file=sys.stderr)
@@ -1148,3 +1149,165 @@ def send_x_linked_report(draft_path, *, log_file, cache_file, fetch_meta, sent_u
                        "duration_s": duration, "report_chars": len(report),
                        "x_links": len(x_links), "source": "antigravity"})
     return 0
+
+
+# ───────────────────────────────────────────────
+# 14) 跨 Bot 当日去重账本 (daily_topic_ledger.json)
+# ───────────────────────────────────────────────
+# 服务于 09:00 三合一串行流水线（1. AI 产业日报 → 2. X 热点播报 → 3. AI Builder）
+# 及 09:30（4. GitHub Trending & Hacker News）：
+# 前序 Bot 在 send / archive-only 成功后将当日已播标题、外链 URL、x.com status ID
+# 写入 shared/logs/daily_topic_ledger.json；后序 Bot 在 fetch 阶段自动读取，
+# 实现 URL/推文级硬过滤与标题级上下文提醒。
+
+DAILY_LEDGER_FILE = Path(__file__).resolve().parent / "logs" / "daily_topic_ledger.json"
+DAILY_LEDGER_KEEP_DAYS = 7
+
+
+def extract_report_headlines(report_text: str) -> list[str]:
+    """从 HTML 稿件中提取各条目的小标题，供跨 Bot 账本展示今日已播话题。"""
+    if not report_text:
+        return []
+    headlines: list[str] = []
+    skip_prefixes = (
+        "📋", "🔥", "🛠", "🛠️", "🚀", "⚡", "📎", "素材", "数据来源",
+        "一、", "二、", "今日", "本周",
+    )
+    for raw_line in report_text.splitlines():
+        line = raw_line.strip()
+        if not line or "<b>" not in line:
+            continue
+        if line.startswith(("原推：", "原帖：", "长文：", "- ", "• ")):
+            continue
+        plain = html.unescape(re.sub(r"<[^>]+>", "", line)).strip()
+        if not plain or len(plain) > 90:
+            continue
+        if any(plain.startswith(p) for p in skip_prefixes):
+            continue
+        if re.match(r"^\d+\.\s+\S+", plain) or ("<a href=" in line and "<b>" in line):
+            headlines.append(plain)
+    return headlines
+
+
+def record_daily_ledger(
+    bot_name: str,
+    report_text: str,
+    urls: list[str] | None = None,
+    *,
+    date_str: str | None = None,
+    ledger_path: Path = DAILY_LEDGER_FILE,
+) -> None:
+    """将某 Bot 当日已发布/归档的稿件条目与 URL 记入共享当日账本。"""
+    try:
+        doc_date = (
+            date_str
+            or extract_report_date(report_text)
+            or datetime.now().strftime("%Y-%m-%d")
+        )
+        all_hrefs = list(extract_hrefs(report_text)) + list(urls or [])
+        norm_urls: set[str] = set()
+        x_ids: set[str] = set()
+        for u in all_hrefs:
+            k = url_key(u)
+            if k:
+                norm_urls.add(k)
+            m = X_POST_RE.search(u or "")
+            if m:
+                x_ids.add(m.group(2))
+
+        headlines = extract_report_headlines(report_text)
+
+        data: dict = {}
+        if ledger_path.exists():
+            try:
+                raw = json.loads(ledger_path.read_text(encoding="utf-8"))
+                if isinstance(raw, dict):
+                    data = raw
+            except Exception:
+                data = {}
+
+        cutoff = _days_ago_str(DAILY_LEDGER_KEEP_DAYS)
+        data = {d: v for d, v in data.items() if isinstance(d, str) and d >= cutoff and isinstance(v, dict)}
+
+        day_bucket = data.setdefault(doc_date, {})
+        day_bucket[bot_name] = {
+            "ts": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "headlines": headlines,
+            "urls": sorted(norm_urls),
+            "x_status_ids": sorted(x_ids),
+        }
+
+        ledger_path.parent.mkdir(parents=True, exist_ok=True)
+        ledger_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception as e:
+        print(f"  [WARN] 写入跨 Bot 账本失败（不影响主流程）: {e}", file=sys.stderr)
+
+
+def load_daily_ledger(
+    date_str: str | None = None,
+    *,
+    exclude_bot: str | None = None,
+    ledger_path: Path = DAILY_LEDGER_FILE,
+) -> dict:
+    """读取指定日期（默认今天或 REPORT_DATE）前序 Bot 已播出的 URL 集合、X status ID 集合与标题明细。"""
+    doc_date = date_str or os.getenv("REPORT_DATE") or datetime.now().strftime("%Y-%m-%d")
+    empty = {"date": doc_date, "urls": set(), "x_status_ids": set(), "entries": []}
+    if not ledger_path.exists():
+        return empty
+    try:
+        data = json.loads(ledger_path.read_text(encoding="utf-8"))
+    except Exception:
+        return empty
+    if not isinstance(data, dict):
+        return empty
+    day_bucket = data.get(doc_date)
+    if not isinstance(day_bucket, dict):
+        return empty
+
+    urls: set[str] = set()
+    x_ids: set[str] = set()
+    entries: list[dict] = []
+    for bot_name, info in day_bucket.items():
+        if exclude_bot and bot_name == exclude_bot:
+            continue
+        if not isinstance(info, dict):
+            continue
+        b_urls = [u for u in (info.get("urls") or []) if isinstance(u, str)]
+        b_xids = [x for x in (info.get("x_status_ids") or []) if isinstance(x, str)]
+        b_heads = [h for h in (info.get("headlines") or []) if isinstance(h, str)]
+        urls.update(b_urls)
+        x_ids.update(b_xids)
+        entries.append({
+            "bot": bot_name,
+            "ts": info.get("ts", ""),
+            "headlines": b_heads,
+            "urls": b_urls,
+            "x_status_ids": b_xids,
+        })
+    return {"date": doc_date, "urls": urls, "x_status_ids": x_ids, "entries": entries}
+
+
+def format_ledger_context(
+    date_str: str | None = None,
+    *,
+    exclude_bot: str | None = None,
+    ledger_path: Path = DAILY_LEDGER_FILE,
+) -> str:
+    """生成注入到后序 Bot last_context.txt 顶部的前序已播清单。"""
+    ledger = load_daily_ledger(date_str=date_str, exclude_bot=exclude_bot, ledger_path=ledger_path)
+    entries = ledger.get("entries") or []
+    if not entries:
+        return ""
+    lines = [
+        "=== TODAY_LEDGER_BEGIN ===",
+        f"【今日（{ledger['date']}）前序 Bot 已播账本 —— 写稿时请主动去重】",
+        "说明：以下话题与链接已由今日前序 Bot 播报。若本轮素材出现同一事件：",
+        "1) 若无新的核心技术增量或社区正反方交锋，请直接跳过，优先选用其他未播素材；",
+        "2) 若确有本板块独有视角（如 X 热点的正反方吵架、Builder 本人深度长文拆解），只写独有增量，绝不重复复述前序已播的通稿背景。",
+    ]
+    for item in entries:
+        heads = item.get("headlines") or []
+        head_str = " ； ".join(heads) if heads else "（无标题明细）"
+        lines.append(f"- [{item['bot']}] 已播 {len(heads)} 条：{head_str}")
+    lines.append("=== TODAY_LEDGER_END ===")
+    return "\n".join(lines)

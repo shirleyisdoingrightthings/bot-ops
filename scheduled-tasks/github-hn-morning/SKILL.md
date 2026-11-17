@@ -6,7 +6,7 @@ description: 每天早 09:30 自动抓取 GitHub Trending（周一至周六 Dail
 目标：每天早上 09:30（在 10:00 美股 & 加密行情日报之前），由本任务自动抓取 GitHub Trending 榜单与 Hacker News 24h 热榜 Top 8（融合 `Best` 高赞榜与 `Top` 实时热议榜）并写稿推送至飞书。
 
 - **模型识别与自主 Orchestrate 原则**：主会话默认直接运行在用户在 Automations 界面为本任务选定的最新模型上（不硬编码模型版本）。主 Agent 拥有**自主 Orchestrate 权**：可根据当天任务复杂度自行决定直接由当前模型完成，或通过 `invoke_subagent(TypeName="self", Model="flash" / "flash_lite")` 将常规信息整理、初稿撰写等适合轻量化的环节委派给快速响应/轻量化模型处理（若委派子代理写稿，主 Agent 须在 `send` 前完成关键事实与 HTML 排版核验）。
-- **周一至周六（`=== FETCH_OK ===`）**：推送《GitHub Daily 今日飙升榜 + Hacker News 热榜 Top 8》（读 `prompt.md`）。不单列“持续霸榜”模块，遇到前几天已经推送过的重复项目/热帖时，保留在榜单中精简 1 句话总结并注明 `<b>（见 MM月DD日 推送）</b>`。
+- **周一至周六（`=== FETCH_OK ===`）**：推送《GitHub Daily 今日飙升榜 + Hacker News 热榜 Top 8》（读 `prompt.md`）。不单列“持续霸榜”模块，遇到前几天已经推送过的重复项目/热帖时，保留在榜单中精简 1 句话总结并注明 `<b>（见 MM月DD日 推送）</b>`；若遇到状态标为 `🔁 今日 09:00 前序 AI 日报已播` 的 HN 帖子，优先从候选池（Top 9–12）递补未播新帖，或 1 句话折叠并注明 `<b>（详见今日《AI 产业日报》/《AI Builder》）</b>`。
 - **周日（`=== WEEKLY_OK ===`）**：推送《GitHub Weekly 本周趋势榜 + Hacker News 热榜 Top 8》（读 `prompt_weekly.md`），含「🔥 持续霸榜」模块（全局唯一周趋势回顾）。
 
 **时间线**：每天 09:30 触发（主力）→ 10:30 由 `com.shirley.github-hn-bot-health` 执行轻量化健康检查（方案 B：不再拉起无头 CLI，若草稿已存在且新鲜仅做 Level 1 重发；电脑关机/休眠错过调度时，开机后由 Antigravity Sidecar 唤醒补跑）。

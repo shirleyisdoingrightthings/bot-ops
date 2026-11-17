@@ -7,24 +7,22 @@ Shared runtime utilities, scheduling definitions, lightweight health checks, and
 ```text
 Daily Scheduled Automations (Asia/Shanghai)
   │
-  ├─ 09:00 CST (Daily)   ─▶ x-hotspot-morning
-  │                           └─ X Hotspot Bot (48h AINews + Techmeme, single top-cited x.com link)
+  ├─ 09:00 CST (Daily)   ─▶ ai-daily-afternoon (3-in-1 Sequential Pipeline + Daily Ledger Dedup)
+  │                           ├─ 1. AI Daily News Bot (Daily every day; no Sunday weekly review)
+  │                           ├─ 2. X Hotspot Bot (48h full Latent Space AINews + Techmeme, noise-filtered)
+  │                           └─ 3. AI Builder Bot (X List + full X Article + external blog fetch)
   │
   ├─ 09:00 CST (Mon–Fri) ─▶ cn-hk-premarket
   │                           └─ A-Share & HK Premarket Outlook (09:00–10:00 only; skips if > 10:00 via === SKIP_EXPIRED ===)
   │
   ├─ 09:30 CST (Daily)   ─▶ github-hn-morning
-  │                           └─ GitHub Trending (Mon–Sat Daily / Sun Weekly) & Hacker News Top 8
+  │                           └─ GitHub Trending (Mon–Sat Daily / Sun Weekly) & Hacker News Top 8 (reads 09:00 ledger)
   │
   ├─ 10:00 CST (Tue–Sat) ─▶ morning-catchup-daily-bots
   │                           └─ US Stock Close & 24h Crypto Daily Bot
   │
   ├─ 12:05 CST (Mon–Fri) ─▶ cn-hk-midday
   │                           └─ A-Share & HK Morning Close + Afternoon Outlook (12:00–13:00 only; skips if premarket already sent today)
-  │
-  ├─ 09:00 CST (Daily)   ─▶ ai-daily-afternoon (Sequential Execution)
-  │                           ├─ Part A: AI Daily News Bot (Daily every day; no Sunday weekly review)
-  │                           └─ Part B: AI Builder Bot
   │
   ├─ 16:15 CST (Mon–Fri) ─▶ cn-hk-close
   │                           └─ A-Share & HK Close Review
