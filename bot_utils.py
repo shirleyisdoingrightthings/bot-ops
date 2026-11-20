@@ -1311,3 +1311,447 @@ def format_ledger_context(
         lines.append(f"- [{item['bot']}] 已播 {len(heads)} 条：{head_str}")
     lines.append("=== TODAY_LEDGER_END ===")
     return "\n".join(lines)
+
+
+# ───────────────────────────────────────────────
+# 15) Exa 定向补盲层（Exa Agent 结构化归因 + 轻量 Search/Contents）
+# ───────────────────────────────────────────────
+# 设计原则：
+# - 零新增依赖：全部基于 requests 直调 https://api.exa.ai REST 接口；
+# - 成本护栏：强制限制在固定档位 (minimal / low / medium / high)，默认 medium，
+#   严禁在定时 Bot 中放行 auto / ultra（防止 $5-$20 失控账单）；
+# - 防幻觉护栏：Exa Agent 的 outputSchema 强制采用 verified/absent/cannot_verify
+#   三态枚举 + 可空字段，只向 last_context.txt 注入 confirmed 的真实催化；
+# - 平滑降级：超时/网络异常/额度异常全部只打 stderr 告警并回退空结果，绝不阻断发稿。
+
+EXA_API_BASE = "https://api.exa.ai"
+EXA_ALLOWED_EFFORTS = ("minimal", "low", "medium", "high")
+_EXA_DEFAULT_EFFORT = "medium"
+_EXA_MCP_CONFIG_PATH = Path.home() / ".gemini" / "config" / "mcp_config.json"
+
+
+def get_exa_api_key() -> str:
+    """获取 Exa API Key：优先读环境变量 EXA_API_KEY，本地调试时回退读 mcp_config.json。"""
+    key = (os.getenv("EXA_API_KEY") or "").strip()
+    if key:
+        return key
+    try:
+        if _EXA_MCP_CONFIG_PATH.exists():
+            cfg = json.loads(_EXA_MCP_CONFIG_PATH.read_text(encoding="utf-8"))
+            exa = (cfg.get("mcpServers") or {}).get("exa") or {}
+            hdr_key = ((exa.get("headers") or {}).get("x-api-key") or "").strip()
+            if hdr_key:
+                return hdr_key
+            raw_url = exa.get("serverUrl") or exa.get("url") or ""
+            m = re.search(r"[?&]exaApiKey=([^&]+)", raw_url)
+            if m:
+                return m.group(1).strip()
+    except Exception:
+        pass
+    return ""
+
+
+def exa_enrich_enabled(default_enabled: bool = True) -> bool:
+    """判断当前运行是否启用 Exa 定向补盲（需同时满足开关开启且存在 API Key）。"""
+    flag = os.getenv("ENABLE_EXA_ENRICH")
+    if flag is not None:
+        if flag.strip().lower() in ("0", "false", "no", "off", ""):
+            return False
+    elif not default_enabled:
+        return False
+    return bool(get_exa_api_key())
+
+
+def _normalize_exa_effort(effort: str | None = None) -> str:
+    """将 effort 收敛到固定预算档位，禁止定时脚本误用 auto/ultra。"""
+    raw = (effort or os.getenv("EXA_AGENT_EFFORT") or _EXA_DEFAULT_EFFORT).strip().lower()
+    if raw in EXA_ALLOWED_EFFORTS:
+        return raw
+    print(
+        f"[bot_utils] Exa effort={raw!r} 不在安全固定档位 {EXA_ALLOWED_EFFORTS} 内，回退为 {_EXA_DEFAULT_EFFORT}",
+        file=sys.stderr,
+    )
+    return _EXA_DEFAULT_EFFORT
+
+
+def _make_exa_session() -> requests.Session:
+    """构建面向海外 api.exa.ai 的 Session（自动兼容代理端口与 TUN 直连，不影响国内直连 Session）。"""
+    s = requests.Session()
+    configured = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
+    if configured:
+        resolved, _ = resolve_proxy(configured)
+        if resolved:
+            s.proxies = {"http": resolved, "https": resolved}
+            return s
+        # resolved == "" 表示 TUN 直连可达；None 表示均不可达时仍尝试直连
+        s.trust_env = False
+        s.proxies = {}
+        return s
+
+    # 未配置代理环境变量（如 cn_hk_report.py）时：先测 TUN/直连，不通则探测本地候选代理端口
+    if _probe(None, timeout=4):
+        s.trust_env = False
+        s.proxies = {}
+        return s
+    resolved, _ = resolve_proxy("http://127.0.0.1:1082", timeout=4)
+    if resolved:
+        s.proxies = {"http": resolved, "https": resolved}
+    else:
+        s.trust_env = False
+        s.proxies = {}
+    return s
+
+
+def _exa_headers(api_key: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {api_key}",
+        "x-api-key": api_key,
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def exa_fetch_contents(
+    urls: list[str],
+    *,
+    max_chars: int = 1600,
+    timeout: int = 25,
+    session: requests.Session | None = None,
+) -> dict[str, str]:
+    """批量调用 Exa /contents 补全抓不到正文的 URL（如短摘要/反爬页）。
+
+    返回 {url_key(url): 正文文本}，任意异常返回 {}，不中断主流程。"""
+    api_key = get_exa_api_key()
+    clean_urls = [u.strip() for u in (urls or []) if isinstance(u, str) and u.strip().startswith("http")]
+    clean_urls = list(dict.fromkeys(clean_urls))
+    if not api_key or not clean_urls:
+        return {}
+
+    sess = session or _make_exa_session()
+    payload = {
+        "urls": clean_urls,
+        "text": {"maxCharacters": int(max_chars)},
+    }
+    try:
+        resp = sess.post(
+            f"{EXA_API_BASE}/contents",
+            headers=_exa_headers(api_key),
+            json=payload,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json() or {}
+    except Exception as exc:
+        print(f"[WARN] Exa /contents 批量补全失败: {exc}", file=sys.stderr)
+        return {}
+
+    out: dict[str, str] = {}
+    for row in (data.get("results") or []):
+        if not isinstance(row, dict):
+            continue
+        raw_url = (row.get("url") or row.get("id") or "").strip()
+        txt = _ARTICLE_WS_RE.sub(" ", (row.get("text") or "").strip())
+        if raw_url and len(txt) >= 120:
+            out[url_key(raw_url)] = txt[:max_chars]
+    return out
+
+
+def exa_search_fallback(
+    query: str,
+    *,
+    num_results: int = 3,
+    max_chars: int = 1000,
+    start_published_date: str | None = None,
+    include_domains: list[str] | None = None,
+    timeout: int = 20,
+    session: requests.Session | None = None,
+) -> list[dict]:
+    """轻量调用 Exa /search（含正文摘录），用于补齐付费墙短摘要或缺失的当日宏观日程结果。"""
+    api_key = get_exa_api_key()
+    q = (query or "").strip()
+    if not api_key or not q:
+        return []
+
+    sess = session or _make_exa_session()
+    payload: dict = {
+        "query": q,
+        "numResults": max(1, min(int(num_results), 5)),
+        "type": "auto",
+        "contents": {"text": {"maxCharacters": int(max_chars)}},
+    }
+    if start_published_date:
+        payload["startPublishedDate"] = start_published_date
+    if include_domains:
+        payload["includeDomains"] = list(include_domains)
+
+    try:
+        resp = sess.post(
+            f"{EXA_API_BASE}/search",
+            headers=_exa_headers(api_key),
+            json=payload,
+            timeout=timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json() or {}
+    except Exception as exc:
+        print(f"[WARN] Exa /search 补全失败 ({q[:40]}): {exc}", file=sys.stderr)
+        return []
+
+    results: list[dict] = []
+    for row in (data.get("results") or []):
+        if not isinstance(row, dict):
+            continue
+        txt = _ARTICLE_WS_RE.sub(" ", (row.get("text") or "").strip())
+        title = (row.get("title") or "").strip()
+        url = (row.get("url") or "").strip()
+        if txt or title:
+            results.append({
+                "title": title,
+                "url": url,
+                "published_date": (row.get("publishedDate") or "").strip(),
+                "text": txt[:max_chars],
+            })
+    return results
+
+
+def _build_catalyst_output_schema(max_items: int) -> dict:
+    """构建带三态 verdict 与可空字段的防幻觉 JSON Schema（遵循 Exa Agent 官方验证规范）。"""
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["items"],
+        "properties": {
+            "items": {
+                "type": "array",
+                "maxItems": max(1, int(max_items)),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["symbol", "name", "verdict"],
+                    "properties": {
+                        "symbol": {"type": "string"},
+                        "name": {"type": "string"},
+                        "verdict": {
+                            "type": "string",
+                            "enum": ["confirmed", "absent", "cannot_verify"],
+                        },
+                        "catalyst_type": {
+                            "type": ["string", "null"],
+                            "enum": [
+                                "earnings",
+                                "guidance",
+                                "rating",
+                                "m_and_a",
+                                "regulation",
+                                "product_or_deal",
+                                "filing_or_offering",
+                                "macro_or_sector",
+                                "other",
+                                None,
+                            ],
+                        },
+                        "catalyst_summary": {
+                            "type": ["string", "null"],
+                            "maxLength": 280,
+                        },
+                        "source_title": {"type": ["string", "null"]},
+                        "source_url": {"type": ["string", "null"]},
+                    },
+                },
+            }
+        },
+    }
+
+
+def exa_agent_verify_catalysts(
+    entities: list[dict],
+    *,
+    market_label: str,
+    session_date: str,
+    effort: str | None = None,
+    max_entities: int = 6,
+    timeout_sec: int = 120,
+    poll_interval: float = 3.0,
+    session: requests.Session | None = None,
+) -> list[dict]:
+    """调用 Exa Agent 批量核查无新闻覆盖的异动股真实催化，仅返回 verdict == 'confirmed' 的条目。
+
+    entities 每项建议含: {"symbol": "...", "name": "...", "pct_change": "...", "sector": "..."}。
+    超时或接口错误时静默降级返回 []，绝不阻断 fetch 主流程。
+    """
+    api_key = get_exa_api_key()
+    batch = [e for e in (entities or []) if isinstance(e, dict) and (e.get("symbol") or e.get("name"))][:max_entities]
+    if not api_key or not batch:
+        return []
+
+    eff = _normalize_exa_effort(effort)
+    sess = session or _make_exa_session()
+    headers = _exa_headers(api_key)
+
+    entity_desc = ", ".join(
+        f"{e.get('name', '')}({e.get('symbol', '')} {e.get('pct_change', '')})"
+        for e in batch
+    )
+    query = (
+        f"Verify whether there is a concrete, verifiable news catalyst explaining the stock price movement "
+        f"for each listed company in input.data around trading date {session_date} ({market_label}, within +/- 36 hours). "
+        f"Companies to check: {entity_desc}. "
+        f"Focus on earnings releases, guidance revisions, analyst upgrades/downgrades or price target changes, "
+        f"M&A/divestitures, share offerings/buybacks, regulatory/legal actions, major contracts/product launches, "
+        f"or direct commodity/macro shocks affecting the specific company."
+    )
+    system_prompt = (
+        "You are a strict financial fact-verification agent. Evaluate ONLY the companies in input.data "
+        f"for news published around {session_date} (within 36 hours). "
+        "Use verdict='confirmed' ONLY when an authoritative financial news report, exchange filing, earnings release, "
+        "or official announcement directly explains the stock's move, and write catalyst_summary in concise Simplified Chinese "
+        "(<= 110 Chinese characters) including concrete numbers/dates/entities from the source. "
+        "Use verdict='absent' when you checked recent financial news and found no company-specific catalyst "
+        "(e.g., pure broad-market or sector rotation). "
+        "Use verdict='cannot_verify' when sources are inaccessible or inconclusive. "
+        "NEVER fabricate numbers, rumors, or outdated news from prior weeks. Leave optional fields null when verdict != 'confirmed'."
+    )
+
+    payload = {
+        "query": query,
+        "systemPrompt": system_prompt,
+        "effort": eff,
+        "input": {"data": batch},
+        "outputSchema": _build_catalyst_output_schema(len(batch)),
+    }
+
+    try:
+        create_resp = sess.post(
+            f"{EXA_API_BASE}/agent/runs",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        create_resp.raise_for_status()
+        run_obj = create_resp.json() or {}
+    except Exception as exc:
+        print(f"[WARN] Exa Agent 创建任务失败: {exc}", file=sys.stderr)
+        return []
+
+    run_id = run_obj.get("id")
+    status = run_obj.get("status")
+    if not run_id:
+        print(f"[WARN] Exa Agent 未返回 run id: {str(run_obj)[:200]}", file=sys.stderr)
+        return []
+
+    print(
+        f"  🤖 Exa Agent 已启动 (id={run_id}, effort={eff}, 标的={len(batch)} 只)...",
+        file=sys.stderr,
+    )
+
+    deadline = time.monotonic() + max(15, int(timeout_sec))
+    while status not in ("completed", "failed", "cancelled"):
+        if time.monotonic() >= deadline:
+            print(f"[WARN] Exa Agent 轮询超时 ({timeout_sec}s, id={run_id})，平滑降级跳过", file=sys.stderr)
+            return []
+        time.sleep(poll_interval)
+        try:
+            poll_resp = sess.get(
+                f"{EXA_API_BASE}/agent/runs/{run_id}",
+                headers=headers,
+                timeout=20,
+            )
+            poll_resp.raise_for_status()
+            run_obj = poll_resp.json() or {}
+            status = run_obj.get("status")
+        except Exception as exc:
+            print(f"[WARN] Exa Agent 轮询异常 (id={run_id}): {exc}", file=sys.stderr)
+            return []
+
+    cost = run_obj.get("costDollars")
+    cost_str = ""
+    if isinstance(cost, dict) and cost.get("total") is not None:
+        cost_str = f", cost=${cost['total']}"
+    elif isinstance(cost, (int, float)):
+        cost_str = f", cost=${cost:.4f}"
+
+    if status != "completed":
+        err = run_obj.get("error") or {}
+        print(f"[WARN] Exa Agent 未完成 (status={status}{cost_str}): {err}", file=sys.stderr)
+        return []
+
+    output = run_obj.get("output") or {}
+    structured = output.get("structured") or {}
+    raw_items = structured.get("items") if isinstance(structured, dict) else []
+    if not isinstance(raw_items, list):
+        return []
+
+    meta_by_sym = {
+        str(e.get("symbol") or "").upper(): e for e in batch if e.get("symbol")
+    }
+    confirmed: list[dict] = []
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        if item.get("verdict") != "confirmed":
+            continue
+        summary = _ARTICLE_WS_RE.sub(" ", str(item.get("catalyst_summary") or "").strip())
+        if len(summary) < 8:
+            continue
+        sym = str(item.get("symbol") or "").strip()
+        orig = meta_by_sym.get(sym.upper(), {})
+        confirmed.append({
+            "symbol": sym or orig.get("symbol", ""),
+            "name": str(item.get("name") or orig.get("name") or "").strip(),
+            "pct_change": str(orig.get("pct_change") or "").strip(),
+            "sector": str(orig.get("sector") or "").strip(),
+            "catalyst_type": str(item.get("catalyst_type") or "other").strip(),
+            "catalyst_summary": summary,
+            "source_title": str(item.get("source_title") or "").strip(),
+            "source_url": str(item.get("source_url") or "").strip(),
+        })
+
+    print(
+        f"  ✓ Exa Agent 核查完成 (id={run_id}{cost_str})：核查 {len(batch)} 只 → 确认真实催化 {len(confirmed)} 只",
+        file=sys.stderr,
+    )
+    return confirmed
+
+
+_CATALYST_TYPE_CN = {
+    "earnings": "财报业绩",
+    "guidance": "业绩指引",
+    "rating": "评级/目标价",
+    "m_and_a": "并购/剥离",
+    "regulation": "监管/诉讼",
+    "product_or_deal": "产品/订单",
+    "filing_or_offering": "公告/增发回购",
+    "macro_or_sector": "宏观/大宗催化",
+    "other": "公司动态",
+}
+
+
+def format_exa_catalyst_block(
+    items: list[dict],
+    title: str = "【🔍 Exa Agent 异动个股定向催化核查（仅保留经交叉验证的真实催化）】",
+) -> str:
+    """将 Exa Agent 核实后的异动催化格式化为可注入 last_context.txt 的文本块。"""
+    if not items:
+        return ""
+    lines = [
+        title,
+        "（写稿说明：以下条目由 Exa Agent 定向交叉核实并确认，可直接作为对应板块与焦点异动股的催化归因；未列于此且 RSS/电报亦无提及的个股，继续按规范写「未见明确催化」。）",
+    ]
+    for it in items:
+        sym = it.get("symbol", "")
+        name = it.get("name", "")
+        pct = it.get("pct_change", "")
+        ctype = _CATALYST_TYPE_CN.get(it.get("catalyst_type", ""), "公司动态")
+        summary = it.get("catalyst_summary", "")
+        src_title = it.get("source_title", "")
+        src_url = it.get("source_url", "")
+        head = f"{name}({sym} {pct})" if pct else f"{name}({sym})"
+        src_part = ""
+        if src_title and src_url:
+            src_part = f" [来源: {src_title} | {src_url}]"
+        elif src_url:
+            src_part = f" [来源: {src_url}]"
+        elif src_title:
+            src_part = f" [来源: {src_title}]"
+        lines.append(f"· {head} [{ctype}]：{summary}{src_part}")
+    return "\n".join(lines)
