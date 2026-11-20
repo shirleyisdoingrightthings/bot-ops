@@ -1374,32 +1374,51 @@ def _normalize_exa_effort(effort: str | None = None) -> str:
     return _EXA_DEFAULT_EFFORT
 
 
-def _make_exa_session() -> requests.Session:
-    """构建面向海外 api.exa.ai 的 Session（自动兼容代理端口与 TUN 直连，不影响国内直连 Session）。"""
+def _build_session_for_proxy(proxy_url: str | None) -> requests.Session:
+    """按指定代理构建独立 Session（不继承环境变量残留，避免污染连接池）。"""
     s = requests.Session()
-    configured = os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY")
-    if configured:
-        resolved, _ = resolve_proxy(configured)
-        if resolved:
-            s.proxies = {"http": resolved, "https": resolved}
-            return s
-        # resolved == "" 表示 TUN 直连可达；None 表示均不可达时仍尝试直连
-        s.trust_env = False
-        s.proxies = {}
-        return s
-
-    # 未配置代理环境变量（如 cn_hk_report.py）时：先测 TUN/直连，不通则探测本地候选代理端口
-    if _probe(None, timeout=4):
-        s.trust_env = False
-        s.proxies = {}
-        return s
-    resolved, _ = resolve_proxy("http://127.0.0.1:1082", timeout=4)
-    if resolved:
-        s.proxies = {"http": resolved, "https": resolved}
+    s.trust_env = False
+    if proxy_url:
+        s.proxies = {"http": proxy_url, "https": proxy_url}
     else:
-        s.trust_env = False
         s.proxies = {}
     return s
+
+
+def _resolve_exa_proxy_candidates() -> list[str | None]:
+    """返回访问海外 api.exa.ai 的候选链路列表（按优先级排序：优先可用代理，次选直连互备）。
+
+    背景：macOS 系统 Python 3.9（LibreSSL 2.8.3）在国内直连 Cloudflare/api.exa.ai 时易遇
+    SSLEOFError(8, EOF occurred in violation of protocol)；优先走稳定本地代理并在 SSL/连接异常时
+    自动切换备选链路重试，可根治单次握手抖动导致的补盲丢失。"""
+    candidates: list[str | None] = []
+    configured = (os.getenv("HTTPS_PROXY") or os.getenv("HTTP_PROXY") or "").strip()
+    if configured:
+        resolved, _ = resolve_proxy(configured, timeout=4)
+        if resolved:
+            candidates.append(resolved)
+        candidates.append(None)
+    else:
+        # 未配置代理环境变量（如 cn_hk_report.py）时：优先探测本地候选代理（1082 → 12450），
+        # 命中即走代理为主、直连兜底；未命中再尝试直连。
+        resolved, _ = resolve_proxy("http://127.0.0.1:1082", timeout=4)
+        if resolved:
+            candidates.append(resolved)
+            candidates.append(None)
+        else:
+            candidates.append(None)
+
+    dedup: list[str | None] = []
+    for c in candidates:
+        if c not in dedup:
+            dedup.append(c)
+    return dedup
+
+
+def _make_exa_session() -> requests.Session:
+    """构建面向海外 api.exa.ai 的默认 Session（优先走可用本地代理，回退直连）。"""
+    cands = _resolve_exa_proxy_candidates()
+    return _build_session_for_proxy(cands[0] if cands else None)
 
 
 def _exa_headers(api_key: str) -> dict[str, str]:
@@ -1409,6 +1428,124 @@ def _exa_headers(api_key: str) -> dict[str, str]:
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
+
+
+def _exa_request(
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str],
+    json_body: dict | None = None,
+    timeout: int = 25,
+    session: requests.Session | None = None,
+    retries: int = 2,
+    op_name: str = "Exa",
+) -> requests.Response | None:
+    """统一执行 Exa HTTP 请求：自动处理 SSLEOFError / 网络抖动重试与代理↔直连互切，
+    并对 401/402/400/429 给出明确分类告警（非可恢复错误不盲目重试）。"""
+    if session is not None:
+        proxy_cands: list[str | None] = [
+            session.proxies.get("https") or session.proxies.get("http") or None
+        ]
+        # 若调用方传入的是固定 Session，仍追加另一条链路作为 SSL/连接故障兜底
+        fallback = None if proxy_cands[0] else (
+            resolve_proxy("http://127.0.0.1:1082", timeout=3)[0] or None
+        )
+        if fallback != proxy_cands[0]:
+            proxy_cands.append(fallback)
+    else:
+        proxy_cands = _resolve_exa_proxy_candidates()
+
+    cur_idx = 0
+    cur_sess = session if session is not None else _build_session_for_proxy(proxy_cands[0])
+    owned_sess = session is None
+    last_exc: Exception | None = None
+
+    try:
+        for attempt in range(retries + 1):
+            try:
+                resp = cur_sess.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=json_body,
+                    timeout=timeout,
+                )
+            except (requests.exceptions.SSLError, requests.exceptions.ConnectionError, requests.exceptions.Timeout) as exc:
+                last_exc = exc
+                if attempt < retries:
+                    # 发生 SSL/连接异常时重建干净 Session，并在代理与直连间切换一次
+                    if owned_sess:
+                        try:
+                            cur_sess.close()
+                        except Exception:
+                            pass
+                    cur_idx = (cur_idx + 1) % len(proxy_cands)
+                    cur_sess = _build_session_for_proxy(proxy_cands[cur_idx])
+                    owned_sess = True
+                    wait_s = 1.5 * (attempt + 1)
+                    via = proxy_cands[cur_idx] or "直连"
+                    print(
+                        f"[WARN] {op_name} 第 {attempt + 1} 次连接异常 ({type(exc).__name__})，"
+                        f"{wait_s:.1f}s 后切至 {via} 重试...",
+                        file=sys.stderr,
+                    )
+                    time.sleep(wait_s)
+                    continue
+                print(f"[WARN] {op_name} 请求失败（已重试 {retries} 次）: {exc}", file=sys.stderr)
+                return None
+            except Exception as exc:
+                print(f"[WARN] {op_name} 请求异常: {exc}", file=sys.stderr)
+                return None
+
+            code = resp.status_code
+            if 200 <= code < 300:
+                return resp
+            if code in (401, 403):
+                print(
+                    f"[ERR] {op_name} 鉴权失败 (HTTP {code})：请检查 EXA_API_KEY 是否有效 — {resp.text[:180]}",
+                    file=sys.stderr,
+                )
+                return None
+            if code == 402:
+                print(
+                    f"[ERR] {op_name} 额度/余额不足 (HTTP 402)：请检查 Exa 账户余额 — {resp.text[:180]}",
+                    file=sys.stderr,
+                )
+                return None
+            if code == 400:
+                print(
+                    f"[WARN] {op_name} 参数或 Schema 校验失败 (HTTP 400): {resp.text[:240]}",
+                    file=sys.stderr,
+                )
+                return None
+            if code in (429, 500, 502, 503, 504):
+                if attempt < retries:
+                    wait_s = 2.0 * (attempt + 1)
+                    print(
+                        f"[WARN] {op_name} 服务端限流/临时错误 (HTTP {code})，{wait_s:.1f}s 后重试...",
+                        file=sys.stderr,
+                    )
+                    time.sleep(wait_s)
+                    continue
+                print(
+                    f"[WARN] {op_name} 服务端错误 (HTTP {code}，已重试 {retries} 次): {resp.text[:180]}",
+                    file=sys.stderr,
+                )
+                return None
+
+            print(f"[WARN] {op_name} 返回异常状态 (HTTP {code}): {resp.text[:180]}", file=sys.stderr)
+            return None
+
+        if last_exc:
+            print(f"[WARN] {op_name} 最终失败: {last_exc}", file=sys.stderr)
+        return None
+    finally:
+        if owned_sess and cur_sess is not None:
+            try:
+                cur_sess.close()
+            except Exception:
+                pass
 
 
 def exa_fetch_contents(
@@ -1427,22 +1564,26 @@ def exa_fetch_contents(
     if not api_key or not clean_urls:
         return {}
 
-    sess = session or _make_exa_session()
     payload = {
         "urls": clean_urls,
         "text": {"maxCharacters": int(max_chars)},
     }
+    resp = _exa_request(
+        "POST",
+        f"{EXA_API_BASE}/contents",
+        headers=_exa_headers(api_key),
+        json_body=payload,
+        timeout=timeout,
+        session=session,
+        retries=2,
+        op_name="Exa /contents",
+    )
+    if resp is None:
+        return {}
     try:
-        resp = sess.post(
-            f"{EXA_API_BASE}/contents",
-            headers=_exa_headers(api_key),
-            json=payload,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
         data = resp.json() or {}
     except Exception as exc:
-        print(f"[WARN] Exa /contents 批量补全失败: {exc}", file=sys.stderr)
+        print(f"[WARN] Exa /contents JSON 解析失败: {exc}", file=sys.stderr)
         return {}
 
     out: dict[str, str] = {}
@@ -1461,40 +1602,50 @@ def exa_search_fallback(
     *,
     num_results: int = 3,
     max_chars: int = 1000,
+    category: str | None = None,
     start_published_date: str | None = None,
     include_domains: list[str] | None = None,
     timeout: int = 20,
     session: requests.Session | None = None,
 ) -> list[dict]:
-    """轻量调用 Exa /search（含正文摘录），用于补齐付费墙短摘要或缺失的当日宏观日程结果。"""
+    """轻量调用 Exa /search（含正文摘录），用于补齐付费墙短摘要、财报/公告原文或缺失的当日宏观日程结果。
+
+    支持可选 category（如 Exa Financial Markets 的 'financial report' 或 'news'）。"""
     api_key = get_exa_api_key()
     q = (query or "").strip()
     if not api_key or not q:
         return []
 
-    sess = session or _make_exa_session()
     payload: dict = {
         "query": q,
         "numResults": max(1, min(int(num_results), 5)),
         "type": "auto",
         "contents": {"text": {"maxCharacters": int(max_chars)}},
     }
+    if category:
+        payload["category"] = str(category).strip()
     if start_published_date:
         payload["startPublishedDate"] = start_published_date
     if include_domains:
         payload["includeDomains"] = list(include_domains)
 
+    op = f"Exa /search[{category}]" if category else "Exa /search"
+    resp = _exa_request(
+        "POST",
+        f"{EXA_API_BASE}/search",
+        headers=_exa_headers(api_key),
+        json_body=payload,
+        timeout=timeout,
+        session=session,
+        retries=2,
+        op_name=f"{op}({q[:32]})",
+    )
+    if resp is None:
+        return []
     try:
-        resp = sess.post(
-            f"{EXA_API_BASE}/search",
-            headers=_exa_headers(api_key),
-            json=payload,
-            timeout=timeout,
-        )
-        resp.raise_for_status()
         data = resp.json() or {}
     except Exception as exc:
-        print(f"[WARN] Exa /search 补全失败 ({q[:40]}): {exc}", file=sys.stderr)
+        print(f"[WARN] {op} JSON 解析失败 ({q[:40]}): {exc}", file=sys.stderr)
         return []
 
     results: list[dict] = []
@@ -1570,7 +1721,7 @@ def exa_agent_verify_catalysts(
     session_date: str,
     effort: str | None = None,
     max_entities: int = 6,
-    timeout_sec: int = 120,
+    timeout_sec: int = 180,
     poll_interval: float = 3.0,
     session: requests.Session | None = None,
 ) -> list[dict]:
@@ -1585,7 +1736,6 @@ def exa_agent_verify_catalysts(
         return []
 
     eff = _normalize_exa_effort(effort)
-    sess = session or _make_exa_session()
     headers = _exa_headers(api_key)
 
     entity_desc = ", ".join(
@@ -1596,17 +1746,19 @@ def exa_agent_verify_catalysts(
         f"Verify whether there is a concrete, verifiable news catalyst explaining the stock price movement "
         f"for each listed company in input.data around trading date {session_date} ({market_label}, within +/- 36 hours). "
         f"Companies to check: {entity_desc}. "
-        f"Focus on earnings releases, guidance revisions, analyst upgrades/downgrades or price target changes, "
+        f"Prioritize authoritative financial reports, earnings releases & earnings call transcripts, "
+        f"SEC/HKEX/exchange filings (8-K/6-K/10-Q), guidance revisions, analyst upgrades/downgrades or price target changes, "
         f"M&A/divestitures, share offerings/buybacks, regulatory/legal actions, major contracts/product launches, "
         f"or direct commodity/macro shocks affecting the specific company."
     )
     system_prompt = (
         "You are a strict financial fact-verification agent. Evaluate ONLY the companies in input.data "
         f"for news published around {session_date} (within 36 hours). "
-        "Use verdict='confirmed' ONLY when an authoritative financial news report, exchange filing, earnings release, "
-        "or official announcement directly explains the stock's move, and write catalyst_summary in concise Simplified Chinese "
-        "(<= 110 Chinese characters) including concrete numbers/dates/entities from the source. "
-        "Use verdict='absent' when you checked recent financial news and found no company-specific catalyst "
+        "Use verdict='confirmed' ONLY when an authoritative financial news report, exchange filing (SEC/HKEX/SSE/SZSE), "
+        "earnings release or earnings call transcript, or broker research report directly explains the stock's move, "
+        "and write catalyst_summary in concise Simplified Chinese (<= 110 Chinese characters) including concrete "
+        "numbers/dates/entities from the source. "
+        "Use verdict='absent' when you checked recent financial news and filings and found no company-specific catalyst "
         "(e.g., pure broad-market or sector rotation). "
         "Use verdict='cannot_verify' when sources are inaccessible or inconclusive. "
         "NEVER fabricate numbers, rumors, or outdated news from prior weeks. Leave optional fields null when verdict != 'confirmed'."
@@ -1620,17 +1772,22 @@ def exa_agent_verify_catalysts(
         "outputSchema": _build_catalyst_output_schema(len(batch)),
     }
 
+    create_resp = _exa_request(
+        "POST",
+        f"{EXA_API_BASE}/agent/runs",
+        headers=headers,
+        json_body=payload,
+        timeout=30,
+        session=session,
+        retries=2,
+        op_name="Exa Agent 创建任务",
+    )
+    if create_resp is None:
+        return []
     try:
-        create_resp = sess.post(
-            f"{EXA_API_BASE}/agent/runs",
-            headers=headers,
-            json=payload,
-            timeout=30,
-        )
-        create_resp.raise_for_status()
         run_obj = create_resp.json() or {}
     except Exception as exc:
-        print(f"[WARN] Exa Agent 创建任务失败: {exc}", file=sys.stderr)
+        print(f"[WARN] Exa Agent 创建响应 JSON 解析失败: {exc}", file=sys.stderr)
         return []
 
     run_id = run_obj.get("id")
@@ -1644,24 +1801,37 @@ def exa_agent_verify_catalysts(
         file=sys.stderr,
     )
 
-    deadline = time.monotonic() + max(15, int(timeout_sec))
+    deadline = time.monotonic() + max(20, int(timeout_sec))
+    consecutive_poll_errs = 0
     while status not in ("completed", "failed", "cancelled"):
         if time.monotonic() >= deadline:
             print(f"[WARN] Exa Agent 轮询超时 ({timeout_sec}s, id={run_id})，平滑降级跳过", file=sys.stderr)
             return []
         time.sleep(poll_interval)
+        poll_resp = _exa_request(
+            "GET",
+            f"{EXA_API_BASE}/agent/runs/{run_id}",
+            headers=headers,
+            timeout=20,
+            session=session,
+            retries=1,
+            op_name=f"Exa Agent 轮询({run_id[:8]})",
+        )
+        if poll_resp is None:
+            consecutive_poll_errs += 1
+            if consecutive_poll_errs >= 3:
+                print(f"[WARN] Exa Agent 连续 3 次轮询失败 (id={run_id})，平滑降级跳过", file=sys.stderr)
+                return []
+            continue
         try:
-            poll_resp = sess.get(
-                f"{EXA_API_BASE}/agent/runs/{run_id}",
-                headers=headers,
-                timeout=20,
-            )
-            poll_resp.raise_for_status()
             run_obj = poll_resp.json() or {}
             status = run_obj.get("status")
+            consecutive_poll_errs = 0
         except Exception as exc:
-            print(f"[WARN] Exa Agent 轮询异常 (id={run_id}): {exc}", file=sys.stderr)
-            return []
+            consecutive_poll_errs += 1
+            print(f"[WARN] Exa Agent 轮询 JSON 解析异常 (id={run_id}): {exc}", file=sys.stderr)
+            if consecutive_poll_errs >= 3:
+                return []
 
     cost = run_obj.get("costDollars")
     cost_str = ""
